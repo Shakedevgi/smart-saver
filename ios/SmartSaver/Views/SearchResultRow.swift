@@ -6,25 +6,28 @@ struct SearchResultRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Title
             if let title = hit.metadata.title, !title.isEmpty {
                 Text(title)
-                    .font(.headline)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
                     .lineLimit(2)
             } else {
                 Text(displayHost)
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.55))
                     .lineLimit(1)
             }
 
+            // Summary
             if let summary = hit.summary, !summary.isEmpty {
                 Text(summary)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.65))
                     .lineLimit(3)
             }
 
-            // Tag badges — horizontal scroll keeps wrapping simple on
+            // Badge row — horizontal scroll keeps wrapping simple on
             // very-long-tech-list items.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -34,10 +37,10 @@ struct SearchResultRow: View {
                         FailedBadge()
                     }
                     if let cat = hit.category, hit.metadata.status != "processing" {
-                        TagBadge(text: cat, systemImage: "tag.fill", color: .accentColor)
+                        TagBadge(text: cat, systemImage: "tag.fill", color: Brand.electricBlue)
                     }
                     if let loc = hit.metadata.location, !loc.isEmpty {
-                        TagBadge(text: loc, systemImage: "mappin.and.ellipse", color: .blue)
+                        TagBadge(text: loc, systemImage: "mappin.and.ellipse", color: .cyan)
                     }
                     if let price = hit.metadata.price, !price.isEmpty {
                         TagBadge(text: price, systemImage: "dollarsign.circle.fill", color: .green)
@@ -52,43 +55,52 @@ struct SearchResultRow: View {
                 .padding(.horizontal, 1)
             }
 
+            // Source / URL footer
             HStack(spacing: 6) {
-                Image(systemName: hit.metadata.sourceType == "video" ? "play.rectangle.fill" : "doc.text.fill")
+                Image(systemName: hit.metadata.sourceType == "video"
+                      ? "play.rectangle.fill" : "doc.text.fill")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Brand.electricBlue.opacity(0.70))
                 Text(hit.url)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Color.white.opacity(0.30))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 if let dist = hit.distance {
-                    Text(String(format: "•  d %.2f", dist))
+                    Text(String(format: "d %.2f", dist))
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.white.opacity(0.25))
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Brand.cardBackground)
         )
         .overlay(
-            // Outline the card in orange when the LLM was uncertain so the
-            // user immediately spots it even from across the list. Yellow
-            // outline takes precedence while the async pipeline is still
-            // running on this item.
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(rowOutlineColor, lineWidth: 1.5)
+                .stroke(rowBorderColor, lineWidth: rowBorderWidth)
         )
     }
 
-    private var rowOutlineColor: Color {
-        if hit.metadata.status == "processing" { return Color.yellow.opacity(0.6) }
-        if hit.metadata.status == "failed" { return Color.red.opacity(0.55) }
-        if hit.metadata.isUncertain == true { return Color.orange.opacity(0.6) }
-        return Color.clear
+    private var rowBorderColor: Color {
+        switch hit.metadata.status {
+        case "processing": return Color.yellow.opacity(0.55)
+        case "failed":     return Color.red.opacity(0.50)
+        default:
+            return hit.metadata.isUncertain == true
+                ? Color.orange.opacity(0.55)
+                : Brand.cardBorder
+        }
+    }
+
+    private var rowBorderWidth: CGFloat {
+        switch hit.metadata.status {
+        case "processing", "failed": return 1.5
+        default: return hit.metadata.isUncertain == true ? 1.5 : 1.0
+        }
     }
 
     private var displayHost: String {
@@ -110,9 +122,10 @@ struct TagBadge: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
-        .background(color.opacity(0.18))
+        .background(color.opacity(0.16))
         .foregroundStyle(color)
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 0.8))
         .lineLimit(1)
     }
 }
@@ -131,10 +144,10 @@ struct ProcessingBadge: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(Color.yellow.opacity(pulse ? 0.35 : 0.18))
+        .background(Color.yellow.opacity(pulse ? 0.32 : 0.16))
         .foregroundStyle(Color.orange)
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.yellow.opacity(0.6), lineWidth: 1))
+        .overlay(Capsule().stroke(Color.yellow.opacity(0.55), lineWidth: 0.8))
         .onAppear {
             withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                 pulse = true
@@ -157,7 +170,7 @@ struct FailedBadge: View {
         .background(Color.red.opacity(0.18))
         .foregroundStyle(Color.red)
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.red.opacity(0.55), lineWidth: 1))
+        .overlay(Capsule().stroke(Color.red.opacity(0.40), lineWidth: 0.8))
     }
 }
 
@@ -174,11 +187,9 @@ struct UncertaintyBadge: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(Color.orange.opacity(0.22))
+        .background(Color.orange.opacity(0.18))
         .foregroundStyle(Color.orange)
         .clipShape(Capsule())
-        .overlay(
-            Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1)
-        )
+        .overlay(Capsule().stroke(Color.orange.opacity(0.40), lineWidth: 0.8))
     }
 }

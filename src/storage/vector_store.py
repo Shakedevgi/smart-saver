@@ -41,7 +41,7 @@ META_KEYS = (
     "url", "source_type", "title", "category", "is_uncertain",
     "alternative_categories", "summary", "key_insights",
     "price", "location", "technologies",
-    "entities_json", "ingested_at", "status",
+    "entities_json", "ingested_at", "created_at", "status",
 )
 
 # `status` lifecycle: "processing" → ("completed" | "failed")
@@ -125,6 +125,7 @@ class VectorStoreManager:
         but unlikely to win against real items. Once the background task
         finishes, `add_item` upserts the same id with the full embedding.
         """
+        now = datetime.now(timezone.utc)
         metadata: dict[str, Any] = {
             "url": url,
             "source_type": source_type.value,
@@ -139,7 +140,8 @@ class VectorStoreManager:
             "technologies": "",
             "entities_json": "{}",
             "status": STATUS_PROCESSING,
-            "ingested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ingested_at": now.isoformat(timespec="seconds"),
+            "created_at": int(now.timestamp()),
         }
         try:
             self._collection.upsert(ids=[url], documents=[url], metadatas=[metadata])
@@ -397,6 +399,7 @@ class VectorStoreManager:
         ents = analysis.extracted_entities.model_dump()
         technologies = ents.get("technologies") or []
 
+        now = datetime.now(timezone.utc)
         meta: dict[str, Any] = {
             "url": url,
             "source_type": result.source_type.value,
@@ -411,7 +414,8 @@ class VectorStoreManager:
             "technologies": "|".join(technologies) if technologies else "",
             "entities_json": json.dumps(ents, ensure_ascii=False),
             "status": result.status or STATUS_COMPLETED,
-            "ingested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ingested_at": now.isoformat(timespec="seconds"),
+            "created_at": int(now.timestamp()),
         }
         # Chroma metadata rejects None — coerce any None we may have missed.
         return {k: (v if v is not None else "") for k, v in meta.items()}

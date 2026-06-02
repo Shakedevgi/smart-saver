@@ -36,6 +36,9 @@ struct HitMetadata: Codable, Hashable {
     let technologies: String?
     let entitiesJson: String?
     let ingestedAt: String?
+    /// Unix timestamp (seconds since epoch) set at ingestion time.
+    /// Used for chronological sorting (newest-first) on the dashboard.
+    let createdAt: Double?
     /// One of: "processing" | "completed" | "failed". Populated by the
     /// async pipeline (Step 6). Older rows without this field decode to nil
     /// — treat nil as "completed" so the UI is backward-compatible.

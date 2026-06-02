@@ -1,185 +1,208 @@
-# 📑 SmartSaver — The AI-Powered Link Archiver for Social Media
+# 📑 SmartSaver — AI-Powered Link Archiver
 
 > **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 💀
 
-Welcome to **SmartSaver**, a next-generation link archiver and semantic bookmarking system that takes raw links from your favorite social media platforms (YouTube, Instagram, TikTok, and more) and uses local AI to extract, summarize, and categorize them in under a second — completely backgrounded, offline-first, and private.
+**SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
 
-No more scroll-paralysis. No more *"what was that cool coding video I saved three months ago?"*. Just share the link from your iPhone, and let local LLMs do the heavy lifting while you keep scrolling.
-
----
-
-## 🚀 Key Features & UX Magic
-
-- **⚡ Sub-second share-sheet dismissal.** Using FastAPI's native `BackgroundTasks`, the iOS Share Extension captures your shared URL, hands it to the server, and flashes a "Saved!" checkmark in **under 1 second**. The processing happens entirely in the background.
-- **🧠 Local semantic analysis.** Powered by local AI models, the backend automatically transcribes video audio, reads text off the screen via OCR, and understands the underlying topic — all without leaving your machine.
-- **🏷️ Dynamic categorization (anti-lazy LLM).** If a video fits your existing categories (e.g. *Programming*, *Travel*, *Personal Finance*), it goes there. If it's a completely new topic, the LLM dynamically invents a fresh category on the fly.
-- **⚠️ Disambiguation UI.** If the local LLM feels torn or low-confidence, it tags the item with an orange **"Needs Disambiguation"** capsule and outlines the card in orange for your manual review.
-- **📁 Smart category deletion & full CRUD.** Swipe-to-delete items, edit titles/summaries inline, add links manually with the `+` button, or delete categories with the option to safely move orphaned items to a "General" bucket instead of nuking them.
+The server runs on your Mac (or any machine), tunnelled to the public internet via **ngrok** so the iOS app works on cellular anywhere in the world.
 
 ---
 
-## 🛠️ The Tech Stack
+## ✨ Features
 
-SmartSaver bridges the gap between high-performance Python backend orchestration and native iOS system extensions:
-
-### Backend (the heavy lifter)
-
-- **FastAPI (Python)** — high-performance async API layer with native background-task execution.
-- **ChromaDB** — vector database holding semantic embeddings for instant search and categorization.
-- **Ollama (Llama 3 / Mistral)** — local LLM running completely offline on personal hardware.
-- **Whisper (faster-whisper)** — audio transcription engine to extract speech from videos.
-- **EasyOCR (MPS-accelerated)** — computer-vision layer to capture embedded text, graphics, and subtitles (crucial for Instagram Reels & TikToks). Uses Apple's Metal Performance Shaders for ~4× speedup on Apple Silicon.
-- **yt-dlp** — advanced multimedia scraper for streaming media assets behind platform restriction walls.
-
-### Frontend (the native experience)
-
-- **SwiftUI & Swift** — clean, declarative UI with dynamic grids, semantic search, and pull-to-refresh.
-- **iOS Share Extension (UIKit bridge)** — system-level interceptor for sharing directly from any host app (Safari, Instagram, TikTok).
-- **XcodeGen** — generates an ephemeral `.xcodeproj` from a declarative `project.yml`, keeping the Git repo 100% clean of bloated binary project settings.
+| Feature | Detail |
+|---|---|
+| ⚡ Sub-second share sheet | `POST /api/ingest` returns `202 Accepted` in <1 s. Heavy work runs in a real OS thread so the event loop never blocks. |
+| 🧠 Local semantic search | ChromaDB + ONNX MiniLM embeddings. Search your entire library with natural language. |
+| 🏷️ Dynamic categorisation | The LLM reuses existing categories or invents a new one. No fixed taxonomy. Anti-lazy prompt engineering prevents lazy matching. |
+| ⚠️ Disambiguation UI | Low-confidence items get an orange **"Needs Disambiguation"** badge and card outline for manual review. |
+| 🌐 Source filter bar | One-tap pill filter: **All · Instagram · TikTok · YouTube · Article** — client-side, no extra network call. |
+| 🕐 Chronological order | Browse view always shows newest saves at the top via `created_at` Unix timestamp. |
+| ✏️ Full CRUD | Swipe-to-delete, tap-to-edit (title/summary/category), `+` button for manual ingestion, smart category deletion (move to General or cascade-delete). |
+| 🎨 Premium dark UI | Midnight-blue gradient background, electric-blue accent (#3E86F8), branded card borders, crisp white typography. |
+| 🔄 Status lifecycle | Every item transitions `processing → completed / failed` with matching badge colours (yellow pulse → normal / red). |
 
 ---
 
-## 🔄 How It Works (the pipeline)
+## 🛠️ Tech Stack
+
+### Backend
+
+| Layer | Technology |
+|---|---|
+| API | **FastAPI** + **uvicorn** (async, CORS, BackgroundTasks) |
+| Background tasks | `asyncio.to_thread` — runs Whisper/EasyOCR in the OS thread pool so the event loop stays free |
+| Vector DB | **ChromaDB** (persistent, `data/chroma/`) |
+| Embeddings | ONNX `all-MiniLM-L6-v2` (bundled, ~80 MB, no extra deps) |
+| Local LLM | **Ollama** + `llama3` — structured output via `format=<json_schema>` |
+| Article extraction | **trafilatura** (primary) + BeautifulSoup fallback |
+| Video metadata | **yt-dlp** (YouTube, TikTok, Instagram, X, …) |
+| Audio transcription | **faster-whisper** (`base` model, CPU / Apple Silicon) |
+| Video OCR | **EasyOCR** (frame sampling via OpenCV) |
+| Data models | **Pydantic v2** |
+| Tunnel | **ngrok** — permanent static domain, works on cellular |
+
+### iOS
+
+| Layer | Technology |
+|---|---|
+| Main app | **SwiftUI** (iOS 17+), NavigationStack, dark theme |
+| Share Extension | **UIKit** `UIViewController` — captures URL from any host app |
+| Networking | `URLSession` async/await, `JSONDecoder(.convertFromSnakeCase)` |
+| Project generation | **XcodeGen** — `project.yml` → `.xcodeproj`, signing auto-selected |
+
+---
+
+## 🔄 Pipeline
 
 ```
- ┌───────────────────────┐
- │  iPhone Share Sheet   │
- └───────────┬───────────┘
-             │  (URL shared)
-             ▼
- ┌───────────────────────┐
- │   FastAPI Endpoint    │ ──► 202 Accepted (instant)
- └───────────┬───────────┘
-             │  (fires BackgroundTask)
-             ▼
- ┌──────────────────────────────────┐
- │     Data Extraction Layer        │
- │  • Video parsing  (yt-dlp)       │
- │  • Speech-to-text (Whisper)      │
- │  • Visual text    (EasyOCR / MPS)│
- └───────────────┬──────────────────┘
-                 ▼
- ┌──────────────────────────────────┐
- │  Local Ollama                    │
- │  (dynamic categorization +       │
- │   one-line summary + entities)   │
- └───────────────┬──────────────────┘
-                 ▼
- ┌──────────────────────────────────┐
- │  ChromaDB                        │
- │  (status: processing → completed)│
- └──────────────────────────────────┘
+iPhone Share Sheet
+       │  tap "Save to Smart Saver"
+       ▼
+iOS Share Extension
+       │  POST /api/ingest  { url }
+       ▼
+ngrok tunnel (HTTPS, public internet)
+       │  cryptic-attire-statute.ngrok-free.dev
+       ▼
+FastAPI  →  202 Accepted  →  "Saved!" (< 1 s)
+       │
+       │  asyncio.to_thread (non-blocking)
+       ▼
+Extraction layer
+   ├── ArticleExtractor   trafilatura → BS4 fallback
+   └── VideoExtractor     yt-dlp → faster-whisper → EasyOCR
+       │
+       ▼
+LLMAnalyzer (Ollama / llama3)
+   • dynamic category  • summary  • key insights  • entities
+       │
+       ▼
+VectorStoreManager (ChromaDB)
+   status: processing → completed / failed
+       │
+       ▼
+iOS Dashboard
+   • newest-first chronological sort
+   • source filter  (All / Instagram / TikTok / YouTube / Article)
+   • semantic search across entire library
 ```
 
 ---
 
-## ⚠️ Known Limitations & Disclosures
-
-### The Facebook Auth-Wall 🛑
-Please note that **Facebook links (Posts, Reels, and Marketplace items) are currently not supported by the automated scraping pipeline**. 
-
-Facebook employs aggressive, dynamically generated tracking parameters (e.g., `?mibextid=...`, `&rdid=...`) and enforces an immediate, strict HTTP redirection wall to a login prompt whenever an unauthenticated scraper tries to access their content. Because SmartSaver is dedicated to an **offline-first, privacy-respecting workflow**, we do not scrape behind user accounts or store session cookies.
-
-### 💡 Our Solution: Manual Ingestion
-To ensure you never lose important data, we implemented a **Manual Ingestion** fallback. If an automated pipeline fails (or if you are saving an unsupported platform), you can tap the **`+` (Add)** button in the app's navigation bar to manually paste the URL, type a custom title/summary, and assign a category. It bypasses the scrapers and commits straight to ChromaDB instantly.
-
----
-
-## 🚦 Getting Started (local run guide)
-
-Want to deploy SmartSaver on your own machine and test it on a physical iPhone? Follow this guide.
+## 🚀 Getting Started
 
 ### Prerequisites
 
-1. A Mac (Apple Silicon recommended for fast local LLM + MPS-accelerated OCR).
-2. Xcode installed (with iOS 17+ simulators/SDKs).
-3. [Ollama](https://ollama.com) installed and running locally with `llama3` pulled (`ollama pull llama3`).
-4. Homebrew installed.
-5. `xcodegen` from Homebrew: `brew install xcodegen`.
+- **Mac** (Apple Silicon recommended — faster Whisper + EasyOCR)
+- **Xcode** with iOS 17+ SDK
+- **Homebrew** — `brew install xcodegen ffmpeg`
+- **Ollama** — install from [ollama.com](https://ollama.com), then `ollama pull llama3`
+- **ngrok** — install from [ngrok.com/download](https://ngrok.com/download), then authenticate once:
+  ```bash
+  ngrok config add-authtoken <your-token>   # token at dashboard.ngrok.com
+  ```
 
-### 1. Backend setup
-
-Clone the repository and spin up the Python environment:
+### 1. Python backend
 
 ```bash
 git clone https://github.com/Shakedevgi/smart-saver.git
 cd smart-saver
 
-# Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. DevOps automation (Mac-to-iPhone live-sync)
-
-Instead of manually hunting for IP addresses, run the custom developer orchestration script:
+### 2. Start the dev orchestrator
 
 ```bash
-python run_dev.py
+python run_dev.py          # ngrok default — works on cellular everywhere
+python run_dev.py --local  # LAN Wi-Fi fallback (same network only)
+python run_dev.py --simulator  # iOS Simulator (loopback)
 ```
 
-What this script does behind the scenes:
+`run_dev.py` does everything in one command:
 
-- Automatically detects your Mac's local Wi-Fi network IP (e.g. `192.168.1.145`).
-- Regex-patches the Swift client constants (`NetworkManager.swift` and `ShareViewController.swift`) to target your Mac's IP instead of `localhost`.
-- Triggers `xcodegen generate` to assemble a fresh `SmartSaver.xcodeproj`.
-- Launches the FastAPI Uvicorn server bound to `0.0.0.0:8000` so your physical iPhone can reach it.
+1. Starts (or reuses) an ngrok tunnel on port 8000
+2. Patches `NetworkManager.swift` and `ShareViewController.swift` with the public URL
+3. Runs `xcodegen generate` if any Swift constants changed
+4. Starts uvicorn bound to `0.0.0.0:8000`
 
-For Simulator-only development, pass `--simulator` to pin everything back to `127.0.0.1`.
+### 3. Static ngrok domain (one-time, highly recommended)
 
-### 3. 📱 Physical iPhone deployment
+ngrok's free plan gives you **one permanent static domain** — claim it at `dashboard.ngrok.com/domains`. Once you have it, update the `launch_ngrok()` call in `run_dev.py`:
 
-Because Apple values strict client sandboxing, deploying an app over a local network loopback requires a quick manual configuration inside Xcode:
+```python
+["ngrok", "http", "--domain=your-domain.ngrok-free.app", str(port)]
+```
 
-1. Open the newly generated project file:
+Run `python run_dev.py --no-server --no-xcodegen` once to patch the permanent URL into the Swift files, rebuild in Xcode, and deploy to your phone. You never need to rebuild because of a URL change again.
 
-   ```bash
-   open ios/SmartSaver.xcodeproj
-   ```
+### 4. iOS build & deploy
 
-2. **On your physical iPhone:** Settings → Privacy & Security → **Developer Mode** → toggle ON (accept the prompt to restart your device).
+```bash
+open ios/SmartSaver.xcodeproj
+```
 
-3. Connect your iPhone to your Mac via cable. Select **"Trust This Computer"** and enter your passcode.
+- Select your iPhone (or Simulator) in the Xcode scheme picker
+- **⌘R** — Xcode automatically picks your registered personal team; no manual signing configuration needed
+- First install: iPhone → Settings → General → **VPN & Device Management** → trust your Apple ID
 
-4. **Important signing step (XcodeGen notice):**
-   - In Xcode, select the main `SmartSaver` project root and navigate to **Signing & Capabilities**.
-   - Under TARGETS, select your personal Apple ID account in the **Team** dropdown for **both** targets (`SmartSaver` and `ShareExtension`).
-   - *Note:* Because XcodeGen dynamically regenerates the workspace, you may need to re-select your development team whenever you re-run `xcodegen generate`.
-   - If you get a "Bundle Identifier already used" error, change the bundle suffix slightly (e.g. `com.yourname.smartsaver`).
+### 5. Enable Developer Mode on iPhone (one-time)
 
-5. In the Xcode scheme selector (top-left), choose your physical iPhone device and press **⌘R** to run.
-
-6. Once installed, open your iPhone's Settings → General → **VPN & Device Management**, find your Apple ID under "Developer App", and tap **Trust**.
-
-7. Open the app from your home screen, head over to TikTok or Instagram, and share your first link! 🎉
+Settings → Privacy & Security → **Developer Mode** → ON → restart → confirm.
 
 ---
 
-## 🧪 Testing
+## 🖥️ Keep the server running while away
 
-A full pytest-free smoke suite ships in `tests/test_smoke.py` — no dependencies beyond what's already in `requirements.txt`.
+For the app to work on cellular you just need your Mac running the server at home:
 
 ```bash
+# Prevent the Mac from sleeping (run before python run_dev.py)
+caffeinate -i python run_dev.py
+```
+
+System Settings → Battery → Options → **"Prevent automatic sleeping on power adapter when display is off"** → ON.
+
+The ngrok tunnel (static domain) stays alive as long as the script runs. The iOS app works from anywhere — cellular, different Wi-Fi, abroad — with zero extra setup.
+
+---
+
+## 🧪 Tests
+
+```bash
+source venv/bin/activate
 python tests/test_smoke.py
 # 37/37 passed
 ```
 
-The suite covers: URL classification, sanitization, the full ChromaDB round-trip, all four `/api/*` endpoints, the async background-task pipeline (placeholder → completed/failed lifecycle), manual ingestion via `POST /api/items`, and category management (rename / move-to-General / cascade-delete).
+Coverage: URL classification & sanitization · ChromaDB round-trip · semantic search & category filter · all `/api/*` endpoints · async pipeline lifecycle (`processing → completed / failed`) · manual ingestion · category bulk-rename / cascade-delete · background task failure handling.
 
 ---
 
-## 🔮 Future Roadmap
+## ⚠️ Known Limitations
 
-This project is actively developed. Upcoming features before App Store submission:
+### Facebook
+Facebook's aggressive anti-bot measures (tracking redirects, login walls) mean automated scraping of FB posts/reels is unreliable without auth cookies. Shared FB links are attempted through the standard pipeline; if they fail they land as red **"Failed"** rows. Use the **`+` manual ingestion** button as a fallback — paste the URL, add a title and summary, pick a category, done.
 
-- [ ] **App Group** shared containers for full offline-caching when the server is unreachable.
-- [ ] **Direct single-tap category reassignment** dropdowns inside the dashboard rows.
-- [ ] **Push Notifications** to alert the user immediately when a complex background pipeline finishes analysis.
-- [ ] **Cookie-pinning** for auth-walled sources (Facebook posts, private Instagram accounts).
-- [ ] **Retry button** on red "Failed" rows — re-POST the same URL with one tap.
+### Instagram & TikTok auth
+Some IG Reels and TikTok videos require cookies for yt-dlp to download audio. Public content works; auth-walled content may fail.
+
+### Whisper device
+Whisper runs on CPU by default. `WHISPER_DEVICE=metal` is available for Apple Silicon but requires validating the wheel version.
+
+---
+
+## 🔮 Roadmap
+
+- [ ] Server-sent events (SSE) to push `processing → completed` status updates to the iOS dashboard in real time (no pull-to-refresh needed)
+- [ ] **Retry button** on red "Failed" rows — re-POST the same URL with one tap
+- [ ] **Per-category item counts** shown on each category chip
+- [ ] **App Group** shared container so the Share Extension can cache categories offline
+- [ ] Cookie passthrough (`--cookies-from-browser`) for auth-walled IG/TikTok content
+- [ ] Worker isolation — move heavy ingests to a dedicated process so `/api/search` and `/api/categories` are never starved
 
 ---
 

@@ -231,13 +231,22 @@ def build_app() -> FastAPI:
                 detail=f"Could not stage placeholder: {type(exc).__name__}: {exc}",
             ) from exc
 
-        background_tasks.add_task(
-            orch.process_in_background,
-            url,
-            analyze=req.analyze,
-            store=req.store,
-            existing_categories=req.existing_categories,
-        )
+        # Run the heavy pipeline (yt-dlp + Whisper + EasyOCR + Ollama) in a
+        # real OS thread via asyncio.to_thread so the event loop stays free to
+        # handle subsequent requests. Without this, a sync background task
+        # blocks uvicorn's event loop for the entire Whisper run (~30-120 s),
+        # causing every concurrent request to time out.
+        async def _run_in_thread() -> None:
+            import asyncio
+            await asyncio.to_thread(
+                orch.process_in_background,
+                url,
+                analyze=req.analyze,
+                store=req.store,
+                existing_categories=req.existing_categories,
+            )
+
+        background_tasks.add_task(_run_in_thread)
         logger.info("202 Accepted — background pipeline scheduled for %s", url)
         return placeholder
 

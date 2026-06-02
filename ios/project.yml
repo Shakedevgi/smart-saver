@@ -14,9 +14,11 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
-    # Leave blank so Xcode uses the Personal Team you set up under
-    # Xcode → Settings → Accounts. Override on the CLI / in Xcode if needed.
-    DEVELOPMENT_TEAM: ""
+    # DEVELOPMENT_TEAM is intentionally omitted here. If it were set
+    # (even to ""), xcodegen would overwrite it on every regenerate and
+    # clear whatever Xcode's automatic signing had chosen. By omitting
+    # the key, xcodegen leaves the signing configuration untouched, and
+    # Xcode automatically picks the only registered personal team.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     GENERATE_INFOPLIST_FILE: YES
     # When GENERATE_INFOPLIST_FILE=YES, the *static* CFBundleVersion /

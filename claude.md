@@ -1514,6 +1514,87 @@ python run_dev.py --simulator
 
 ---
 
+## 6.16 Step 12 — Chronological sort, source filter bar, Electric Blue UI overhaul
+
+### Status: ✅ Implemented + xcodebuild-verified (2026-06-02)
+
+### 1. `created_at` Unix timestamp in backend
+
+Every new item (both async background and manual) now stores a `created_at`
+field in Chroma metadata as an `int` (Unix seconds). This is in addition to
+the existing ISO `ingested_at` string — the numeric form is directly sortable
+on the iOS side without date parsing.
+
+| File | Change |
+|------|--------|
+| `src/storage/vector_store.py` | `_build_metadata` and `add_placeholder` both compute `now = datetime.now(timezone.utc)` and include `"created_at": int(now.timestamp())`; `META_KEYS` updated |
+| `ios/SmartSaver/Models/APIModels.swift` | `HitMetadata.createdAt: Double?` added |
+
+### 2. Chronological sorting — newest first
+
+In `DashboardViewModel.runSearch`, the `.categoryBrowse` case now sorts the
+result list by `metadata.createdAt` descending before assigning `hits`. User
+query results keep the hybrid semantic+keyword ranking (order carries meaning
+there). Legacy rows without `created_at` sort to the bottom (`?? 0`).
+
+### 3. Source-based filter bar
+
+A `ContentSource` enum (`All | Instagram | TikTok | YouTube | Article`) drives
+a horizontal scrollable pill row between the category grid and the results list.
+
+- Tapping a pill sets `DashboardViewModel.selectedSource` (no network call).
+- `DashboardViewModel.filteredHits` is a computed var that applies the filter
+  client-side on top of `hits`. Platform is inferred from the item URL host:
+  `instagram.com/instagr.am` → Instagram, `tiktok.com` → TikTok,
+  `youtube.com/youtu.be` → YouTube, everything else → Article.
+- Selected pill: solid brand-blue fill + white text.
+  Unselected: translucent white fill with a subtle white border.
+
+### 4. Electric Blue & Midnight brand theme
+
+| Element | Before | After |
+|---------|--------|-------|
+| App background | Default system white/gray | Deep midnight-blue gradient `(5,8,24) → (8,15,42)` via `.scrollContentBackground(.hidden)` + `.background(Brand.appBackground.ignoresSafeArea())` |
+| Colour scheme | System (adapts to device) | Locked dark: `.preferredColorScheme(.dark)` on root |
+| Tint / accent | System blue | `Brand.electricBlue` `(62,134,248)` via `.tint(Brand.electricBlue)` |
+| Item cards | `secondarySystemBackground` fill, conditional border | `Brand.cardBackground` `(14,22,55)` fill + `Brand.cardBorder` (blue 28% opacity) always-on border; status/uncertainty states use yellow/red/orange at 1.5 pt |
+| Tag badges | Flat fill, no border | Added 0.8 pt border at 30% opacity for depth |
+| Brand logo | Generic drop shadow | Electric-blue glow shadow |
+| Source icons | Gray tertiary | `Brand.electricBlue` at 70% opacity |
+
+The `Brand` enum in `ContentView.swift` now defines:
+`electricBlue`, `gradientTop`, `gradientBottom`, `midnightDeep`,
+`midnightMid`, `cardBackground`, `cardBorder`, `logoGradient`, `appBackground`.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `src/storage/vector_store.py` | `created_at` timestamp in metadata |
+| `ios/SmartSaver/Models/APIModels.swift` | `createdAt: Double?` in `HitMetadata` |
+| `ios/SmartSaver/Views/ContentView.swift` | `Brand` palette expansion; `ContentSource` enum; `selectedSource` + `filteredHits` in VM; chronological sort; source filter bar; dark theme + gradient background |
+| `ios/SmartSaver/Views/SearchResultRow.swift` | `Brand.cardBackground`/`cardBorder` card; white/opacity typography; branded badge borders and icon tint |
+
+### Tests (tests/test_smoke.py — 37/37 pass)
+
+No new backend tests needed — the `created_at` field is additive metadata; all
+37 existing smoke tests still pass. Verified via `python tests/test_smoke.py`.
+
+### Verified
+
+- `python tests/test_smoke.py` → 37/37 passed
+- `xcodegen generate` → project rebuilt
+- `xcodebuild … -destination "generic/platform=iOS Simulator" build` → BUILD SUCCEEDED
+
+### What needs to be done next
+
+- **Per-item platform badge** in the card footer — small Instagram/TikTok/YouTube
+  icon pill to visually identify source at a glance.
+- **SSE push for status updates** — replace pull-to-refresh with a server-sent
+  event stream so Processing rows flip to Completed automatically.
+
+---
+
 ## 7. Update protocol
 
 When you (future Claude or future me) finish a meaningful chunk of work:
