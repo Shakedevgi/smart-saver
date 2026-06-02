@@ -1,6 +1,6 @@
 # 📑 SmartSaver — AI-Powered Link Archiver
 
-> **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 💀
+> **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 
 
 **SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
 
