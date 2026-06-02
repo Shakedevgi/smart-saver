@@ -73,6 +73,18 @@ SmartSaver bridges the gap between high-performance Python backend orchestration
 
 ---
 
+## ⚠️ Known Limitations & Disclosures
+
+### The Facebook Auth-Wall 🛑
+Please note that **Facebook links (Posts, Reels, and Marketplace items) are currently not supported by the automated scraping pipeline**. 
+
+Facebook employs aggressive, dynamically generated tracking parameters (e.g., `?mibextid=...`, `&rdid=...`) and enforces an immediate, strict HTTP redirection wall to a login prompt whenever an unauthenticated scraper tries to access their content. Because SmartSaver is dedicated to an **offline-first, privacy-respecting workflow**, we do not scrape behind user accounts or store session cookies.
+
+### 💡 Our Solution: Manual Ingestion
+To ensure you never lose important data, we implemented a **Manual Ingestion** fallback. If an automated pipeline fails (or if you are saving an unsupported platform), you can tap the **`+` (Add)** button in the app's navigation bar to manually paste the URL, type a custom title/summary, and assign a category. It bypasses the scrapers and commits straight to ChromaDB instantly.
+
+---
+
 ## 🚦 Getting Started (local run guide)
 
 Want to deploy SmartSaver on your own machine and test it on a physical iPhone? Follow this guide.
