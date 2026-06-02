@@ -1,5 +1,7 @@
 # 📑 SmartSaver — AI-Powered Link Archiver
 
+![Tests](https://github.com/Shakedevgi/smart-saver/actions/workflows/ci.yml/badge.svg)
+
 > **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 
 
 **SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
@@ -30,6 +32,11 @@ The server runs on your Mac (or any machine), tunnelled to the public internet v
 git clone https://github.com/Shakedevgi/smart-saver.git
 cd smart-saver
 
+make setup       # creates venv + installs all dependencies
+```
+
+Or manually:
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -38,12 +45,12 @@ pip install -r requirements.txt
 ### 2. Start the dev orchestrator
 
 ```bash
-python run_dev.py          # ngrok default — works on cellular everywhere
-python run_dev.py --local  # LAN Wi-Fi fallback (same network only)
-python run_dev.py --simulator  # iOS Simulator (loopback)
+make dev           # ngrok tunnel — works on cellular everywhere
+make dev-local     # LAN Wi-Fi fallback (same network only)
+make dev-sim       # iOS Simulator (loopback, 127.0.0.1)
 ```
 
-`run_dev.py` does everything in one command:
+`make dev` (which calls `run_dev.py`) does everything in one command:
 
 1. Starts (or reuses) an ngrok tunnel on port 8000
 2. Patches `NetworkManager.swift` and `ShareViewController.swift` with the public URL
@@ -81,8 +88,8 @@ Settings → Privacy & Security → **Developer Mode** → ON → restart → co
 For the app to work on cellular you just need your Mac running the server at home:
 
 ```bash
-# Prevent the Mac from sleeping (run before python run_dev.py)
-caffeinate -i python run_dev.py
+# Prevent the Mac from sleeping (run before make dev)
+caffeinate -i make dev
 ```
 
 System Settings → Battery → Options → **"Prevent automatic sleeping on power adapter when display is off"** → ON.
@@ -94,10 +101,11 @@ The ngrok tunnel (static domain) stays alive as long as the script runs. The iOS
 ## 🧪 Tests
 
 ```bash
-source venv/bin/activate
-python tests/test_smoke.py
+make test
 # 37/37 passed
 ```
+
+Tests run automatically on every push via GitHub Actions (see the badge at the top).
 
 Coverage: URL classification & sanitization · ChromaDB round-trip · semantic search & category filter · all `/api/*` endpoints · async pipeline lifecycle (`processing → completed / failed`) · manual ingestion · category bulk-rename / cascade-delete · background task failure handling.
 
@@ -184,7 +192,6 @@ iOS Dashboard
 ```
 
 ---
-
 
 ## ⚠️ Known Limitations
 
