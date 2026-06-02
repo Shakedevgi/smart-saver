@@ -183,4 +183,4 @@ This project is actively developed. Upcoming features before App Store submissio
 
 ---
 
-Developed with ❤️ by [Shaked Ivgi](https://github.com/Shakedevgi).
+Developed by [Shaked Ivgi](https://github.com/Shakedevgi).
