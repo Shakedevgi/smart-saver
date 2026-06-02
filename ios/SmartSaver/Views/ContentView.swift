@@ -204,11 +204,23 @@ final class DashboardViewModel: ObservableObject {
                 summary: payload.summary.isEmpty ? nil : payload.summary,
                 category: payload.category
             )
-            if let updated = resp.item,
-               let i = hits.firstIndex(where: { $0.url == original.url }) {
-                hits[i] = updated
+
+            let categoryChanged = payload.category != nil && payload.category != original.category
+
+            if let updated = resp.item, let i = hits.firstIndex(where: { $0.url == original.url }) {
+                if categoryChanged, let sel = selectedCategory, updated.category != sel {
+                    // Item moved to a different category while we're browsing a
+                    // specific one — remove it from the visible list immediately.
+                    hits.remove(at: i)
+                } else {
+                    hits[i] = updated
+                }
             }
-            if let new = payload.category, !categories.contains(new) {
+
+            // Refresh the category chips on any category change so that:
+            // • newly invented categories appear as chips
+            // • chips whose last item just moved away are removed
+            if categoryChanged {
                 if let cats = try? await NetworkManager.shared.fetchCategories() {
                     categories = cats
                 }
