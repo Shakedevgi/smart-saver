@@ -66,7 +66,7 @@ Run `python run_dev.py --no-server --no-xcodegen` once to patch the permanent UR
 open ios/SmartSaver.xcodeproj
 ```
 
-- Select your iPhone (or Simulator) in the Xcode scheme picker
+- Select your iPhone (connect it to the mac for the first time set up) or Simulator in the Xcode scheme picker
 - **⌘R** — Xcode automatically picks your registered personal team; no manual signing configuration needed
 - First install: iPhone → Settings → General → **VPN & Device Management** → trust your Apple ID
 
