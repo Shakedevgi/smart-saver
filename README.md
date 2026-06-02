@@ -6,6 +6,14 @@
 
 The server runs on your Mac (or any machine), tunnelled to the public internet via **ngrok** so the iOS app works on cellular anywhere in the world.
 
+<img width="18%" alt="MainScreen" src="https://github.com/user-attachments/assets/3077f9a9-66ed-4433-8eb4-1b3a91a1cb82" /> <img width="18%" alt="IGfilter" src="https://github.com/user-attachments/assets/c9a879b8-45f2-4d53-9465-d047788f7abf" />
+<img width="18%" alt="fullshare" src="https://github.com/user-attachments/assets/d5e1b9dc-8de1-4e48-9bfa-1b4dbfcb24a0" />
+<img width="18%" alt="Saving" src="https://github.com/user-attachments/assets/42950d05-a287-4a81-b45c-911b4389f117" />
+<img width="18%" alt="afteradding" src="https://github.com/user-attachments/assets/d0ce8cfa-9995-438a-a7c6-3500f11ae7f9" />
+
+
+
+
 ---
 
 ## ✨ Features
