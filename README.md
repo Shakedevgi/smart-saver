@@ -11,93 +11,6 @@ The server runs on your Mac (or any machine), tunnelled to the public internet v
 <img width="18%" alt="Saving" src="https://github.com/user-attachments/assets/42950d05-a287-4a81-b45c-911b4389f117" />
 <img width="18%" alt="afteradding" src="https://github.com/user-attachments/assets/d0ce8cfa-9995-438a-a7c6-3500f11ae7f9" />
 
-
-
-
----
-
-## ✨ Features
-
-| Feature | Detail |
-|---|---|
-| ⚡ Sub-second share sheet | `POST /api/ingest` returns `202 Accepted` in <1 s. Heavy work runs in a real OS thread so the event loop never blocks. |
-| 🧠 Local semantic search | ChromaDB + ONNX MiniLM embeddings. Search your entire library with natural language. |
-| 🏷️ Dynamic categorisation | The LLM reuses existing categories or invents a new one. No fixed taxonomy. Anti-lazy prompt engineering prevents lazy matching. |
-| ⚠️ Disambiguation UI | Low-confidence items get an orange **"Needs Disambiguation"** badge and card outline for manual review. |
-| 🌐 Source filter bar | One-tap pill filter: **All · Instagram · TikTok · YouTube · Article** — client-side, no extra network call. |
-| 🕐 Chronological order | Browse view always shows newest saves at the top via `created_at` Unix timestamp. |
-| ✏️ Full CRUD | Swipe-to-delete, tap-to-edit (title/summary/category), `+` button for manual ingestion, smart category deletion (move to General or cascade-delete). |
-| 🎨 Premium dark UI | Midnight-blue gradient background, electric-blue accent (#3E86F8), branded card borders, crisp white typography. |
-| 🔄 Status lifecycle | Every item transitions `processing → completed / failed` with matching badge colours (yellow pulse → normal / red). |
-
----
-
-## 🛠️ Tech Stack
-
-### Backend
-
-| Layer | Technology |
-|---|---|
-| API | **FastAPI** + **uvicorn** (async, CORS, BackgroundTasks) |
-| Background tasks | `asyncio.to_thread` — runs Whisper/EasyOCR in the OS thread pool so the event loop stays free |
-| Vector DB | **ChromaDB** (persistent, `data/chroma/`) |
-| Embeddings | ONNX `all-MiniLM-L6-v2` (bundled, ~80 MB, no extra deps) |
-| Local LLM | **Ollama** + `llama3` — structured output via `format=<json_schema>` |
-| Article extraction | **trafilatura** (primary) + BeautifulSoup fallback |
-| Video metadata | **yt-dlp** (YouTube, TikTok, Instagram, X, …) |
-| Audio transcription | **faster-whisper** (`base` model, CPU / Apple Silicon) |
-| Video OCR | **EasyOCR** (frame sampling via OpenCV) |
-| Data models | **Pydantic v2** |
-| Tunnel | **ngrok** — permanent static domain, works on cellular |
-
-### iOS
-
-| Layer | Technology |
-|---|---|
-| Main app | **SwiftUI** (iOS 17+), NavigationStack, dark theme |
-| Share Extension | **UIKit** `UIViewController` — captures URL from any host app |
-| Networking | `URLSession` async/await, `JSONDecoder(.convertFromSnakeCase)` |
-| Project generation | **XcodeGen** — `project.yml` → `.xcodeproj`, signing auto-selected |
-
----
-
-## 🔄 Pipeline
-
-```
-iPhone Share Sheet
-       │  tap "Save to Smart Saver"
-       ▼
-iOS Share Extension
-       │  POST /api/ingest  { url }
-       ▼
-ngrok tunnel (HTTPS, public internet)
-       │  cryptic-attire-statute.ngrok-free.dev
-       ▼
-FastAPI  →  202 Accepted  →  "Saved!" (< 1 s)
-       │
-       │  asyncio.to_thread (non-blocking)
-       ▼
-Extraction layer
-   ├── ArticleExtractor   trafilatura → BS4 fallback
-   └── VideoExtractor     yt-dlp → faster-whisper → EasyOCR
-       │
-       ▼
-LLMAnalyzer (Ollama / llama3)
-   • dynamic category  • summary  • key insights  • entities
-       │
-       ▼
-VectorStoreManager (ChromaDB)
-   status: processing → completed / failed
-       │
-       ▼
-iOS Dashboard
-   • newest-first chronological sort
-   • source filter  (All / Instagram / TikTok / YouTube / Article)
-   • semantic search across entire library
-```
-
----
-
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -189,6 +102,89 @@ python tests/test_smoke.py
 Coverage: URL classification & sanitization · ChromaDB round-trip · semantic search & category filter · all `/api/*` endpoints · async pipeline lifecycle (`processing → completed / failed`) · manual ingestion · category bulk-rename / cascade-delete · background task failure handling.
 
 ---
+
+## ✨ Features
+
+| Feature | Detail |
+|---|---|
+| ⚡ Sub-second share sheet | `POST /api/ingest` returns `202 Accepted` in <1 s. Heavy work runs in a real OS thread so the event loop never blocks. |
+| 🧠 Local semantic search | ChromaDB + ONNX MiniLM embeddings. Search your entire library with natural language. |
+| 🏷️ Dynamic categorisation | The LLM reuses existing categories or invents a new one. No fixed taxonomy. Anti-lazy prompt engineering prevents lazy matching. |
+| ⚠️ Disambiguation UI | Low-confidence items get an orange **"Needs Disambiguation"** badge and card outline for manual review. |
+| 🌐 Source filter bar | One-tap pill filter: **All · Instagram · TikTok · YouTube · Article** — client-side, no extra network call. |
+| 🕐 Chronological order | Browse view always shows newest saves at the top via `created_at` Unix timestamp. |
+| ✏️ Full CRUD | Swipe-to-delete, tap-to-edit (title/summary/category), `+` button for manual ingestion, smart category deletion (move to General or cascade-delete). |
+| 🎨 Premium dark UI | Midnight-blue gradient background, electric-blue accent (#3E86F8), branded card borders, crisp white typography. |
+| 🔄 Status lifecycle | Every item transitions `processing → completed / failed` with matching badge colours (yellow pulse → normal / red). |
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend
+
+| Layer | Technology |
+|---|---|
+| API | **FastAPI** + **uvicorn** (async, CORS, BackgroundTasks) |
+| Background tasks | `asyncio.to_thread` — runs Whisper/EasyOCR in the OS thread pool so the event loop stays free |
+| Vector DB | **ChromaDB** (persistent, `data/chroma/`) |
+| Embeddings | ONNX `all-MiniLM-L6-v2` (bundled, ~80 MB, no extra deps) |
+| Local LLM | **Ollama** + `llama3` — structured output via `format=<json_schema>` |
+| Article extraction | **trafilatura** (primary) + BeautifulSoup fallback |
+| Video metadata | **yt-dlp** (YouTube, TikTok, Instagram, X, …) |
+| Audio transcription | **faster-whisper** (`base` model, CPU / Apple Silicon) |
+| Video OCR | **EasyOCR** (frame sampling via OpenCV) |
+| Data models | **Pydantic v2** |
+| Tunnel | **ngrok** — permanent static domain, works on cellular |
+
+### iOS
+
+| Layer | Technology |
+|---|---|
+| Main app | **SwiftUI** (iOS 17+), NavigationStack, dark theme |
+| Share Extension | **UIKit** `UIViewController` — captures URL from any host app |
+| Networking | `URLSession` async/await, `JSONDecoder(.convertFromSnakeCase)` |
+| Project generation | **XcodeGen** — `project.yml` → `.xcodeproj`, signing auto-selected |
+
+---
+
+## 🔄 Pipeline
+
+```
+iPhone Share Sheet
+       │  tap "Save to Smart Saver"
+       ▼
+iOS Share Extension
+       │  POST /api/ingest  { url }
+       ▼
+ngrok tunnel (HTTPS, public internet)
+       │  cryptic-attire-statute.ngrok-free.dev
+       ▼
+FastAPI  →  202 Accepted  →  "Saved!" (< 1 s)
+       │
+       │  asyncio.to_thread (non-blocking)
+       ▼
+Extraction layer
+   ├── ArticleExtractor   trafilatura → BS4 fallback
+   └── VideoExtractor     yt-dlp → faster-whisper → EasyOCR
+       │
+       ▼
+LLMAnalyzer (Ollama / llama3)
+   • dynamic category  • summary  • key insights  • entities
+       │
+       ▼
+VectorStoreManager (ChromaDB)
+   status: processing → completed / failed
+       │
+       ▼
+iOS Dashboard
+   • newest-first chronological sort
+   • source filter  (All / Instagram / TikTok / YouTube / Article)
+   • semantic search across entire library
+```
+
+---
+
 
 ## ⚠️ Known Limitations
 
