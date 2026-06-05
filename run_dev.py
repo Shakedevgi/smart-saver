@@ -37,11 +37,18 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT    = Path(__file__).resolve().parent
-IOS_DIR = ROOT / "ios"
+ROOT        = Path(__file__).resolve().parent
+IOS_DIR     = ROOT / "ios"
+ANDROID_DIR = ROOT / "android"
+
 SWIFT_FILES_TO_PATCH = [
     IOS_DIR / "SmartSaver"     / "Services" / "NetworkManager.swift",
     IOS_DIR / "ShareExtension" / "ShareViewController.swift",
+]
+
+ANDROID_FILES_TO_PATCH = [
+    ANDROID_DIR / "app" / "src" / "main" / "kotlin"
+    / "com" / "shakedivgi" / "smartsaver" / "data" / "AppConfig.kt",
 ]
 
 # Matches the base-URL portion of both forms we ever write:
@@ -155,6 +162,33 @@ def run_xcodegen() -> None:
         sys.exit(f"\n!! xcodegen failed (exit {exc.returncode}). See output above.")
 
 
+def run_android_build() -> None:
+    """Run ./gradlew assembleDebug in android/. Sets ANDROID_HOME if not already set."""
+    gradlew = ANDROID_DIR / "gradlew"
+    if not gradlew.exists():
+        print("  ! android/gradlew not found — skipping Android build.")
+        return
+    print("→ Building Android debug APK (./gradlew assembleDebug)…")
+    env = {**subprocess.os.environ}
+    if not env.get("ANDROID_HOME"):
+        env["ANDROID_HOME"] = str(Path.home() / "Library" / "Android" / "sdk")
+    if not env.get("JAVA_HOME"):
+        studio_jbr = Path("/Applications/Android Studio.app/Contents/jbr/Contents/Home")
+        if studio_jbr.exists():
+            env["JAVA_HOME"] = str(studio_jbr)
+    try:
+        subprocess.run(
+            [str(gradlew), "assembleDebug", "--no-daemon"],
+            cwd=ANDROID_DIR,
+            env=env,
+            check=True,
+        )
+        apk = ANDROID_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+        print(f"  ✓ APK built → {apk.relative_to(ROOT)}")
+    except subprocess.CalledProcessError as exc:
+        print(f"  ! Android build failed (exit {exc.returncode}). See output above.")
+
+
 def run_uvicorn(host: str, port: int) -> None:
     print(f"→ Starting uvicorn on {host}:{port} …")
     print("   Ctrl-C to stop.\n")
@@ -196,6 +230,10 @@ def main() -> None:
         "--simulator", action="store_true",
         help="Use http://127.0.0.1 (iOS Simulator / loopback). Skips ngrok.",
     )
+    mode_group.add_argument(
+        "--android-emulator", action="store_true",
+        help="Use http://10.0.2.2:8000 (Android Emulator → host loopback). Skips ngrok.",
+    )
 
     parser.add_argument(
         "--no-server", action="store_true",
@@ -209,12 +247,21 @@ def main() -> None:
         "--no-xcodegen", action="store_true",
         help="Skip the xcodegen regeneration step.",
     )
+    parser.add_argument(
+        "--android-build", action="store_true",
+        help="Run ./gradlew assembleDebug in android/ after patching.",
+    )
     args = parser.parse_args()
 
     # ── resolve mode ─────────────────────────────────────────────────────────
     if args.simulator:
         mode_label  = "Simulator (loopback)"
         new_base_url = f"http://127.0.0.1:{args.port}"
+        bind_host   = "127.0.0.1"
+
+    elif args.android_emulator:
+        mode_label  = "Android Emulator (10.0.2.2 → host loopback)"
+        new_base_url = f"http://10.0.2.2:{args.port}"
         bind_host   = "127.0.0.1"
 
     elif args.local:
@@ -232,9 +279,9 @@ def main() -> None:
     # ── banner ────────────────────────────────────────────────────────────────
     print("=" * 60)
     print(f"  Smart Saver dev orchestrator")
-    print(f"  Mode         : {mode_label}")
-    print(f"  iOS-side URL : {new_base_url}")
-    print(f"  Server bind  : {bind_host}:{args.port}")
+    print(f"  Mode            : {mode_label}")
+    print(f"  iOS/Android URL : {new_base_url}")
+    print(f"  Server bind     : {bind_host}:{args.port}")
     print("=" * 60)
 
     # ── patch Swift constants ─────────────────────────────────────────────────
@@ -242,6 +289,14 @@ def main() -> None:
     any_changed = any(
         patch_swift_url(p, new_base_url) for p in SWIFT_FILES_TO_PATCH
     )
+
+    # ── patch Android Kotlin constants ────────────────────────────────────────
+    print("\n→ Patching Android Kotlin constants…")
+    any(patch_swift_url(p, new_base_url) for p in ANDROID_FILES_TO_PATCH)
+
+    # ── optional Android build ────────────────────────────────────────────────
+    if args.android_build:
+        run_android_build()
 
     # ── xcodegen ──────────────────────────────────────────────────────────────
     if not args.no_xcodegen:
@@ -254,6 +309,10 @@ def main() -> None:
     print()
     if args.simulator:
         print("Tip: select an iOS 17+ Simulator in Xcode, then ⌘R.")
+        print("     For Android Emulator, use --android-emulator instead.")
+    elif getattr(args, 'android_emulator', False):
+        print("Tip: start an Android Emulator in Android Studio, then run/install the APK.")
+        print(f"  Server reachable from emulator at: {new_base_url}")
     elif args.local:
         print("Tip: your iPhone and Mac must be on the same Wi-Fi network.")
         print(f"  Server reachable at: {new_base_url}")

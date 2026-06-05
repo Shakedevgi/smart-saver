@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Smart Saver</string>
+    <string name="share_label">Save to Smart Saver</string>
+    <string name="search_hint">Search saved items semantically…</string>
+    <string name="empty_state">Share a link from Instagram, TikTok, or your browser to seed your library.</string>
+    <string name="saving_message">Saving to Smart Saver…</string>
+    <string name="saved_message">Saved!</string>
+    <string name="error_message">Couldn\'t save</string>
+</resources>
