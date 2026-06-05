@@ -4,10 +4,10 @@
 import Foundation
 
 /// Build-time default. Change this if your FastAPI server runs elsewhere.
-///   - iOS Simulator on this Mac → `http://10.0.2.2:8000`  (works as-is)
+///   - iOS Simulator on this Mac → `https://cryptic-attire-statute.ngrok-free.dev`  (works as-is)
 ///   - Physical iOS device on same Wi-Fi → `http://<your-mac-LAN-ip>:8000`
 ///     and start uvicorn with `--host 0.0.0.0`.
-let kDefaultAPIBaseURL = URL(string: "http://10.0.2.2:8000")!
+let kDefaultAPIBaseURL = URL(string: "https://cryptic-attire-statute.ngrok-free.dev")!
 
 enum APIError: LocalizedError {
     case invalidResponse
