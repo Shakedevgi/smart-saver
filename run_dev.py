@@ -234,6 +234,14 @@ def main() -> None:
         "--android-emulator", action="store_true",
         help="Use http://10.0.2.2:8000 (Android Emulator → host loopback). Skips ngrok.",
     )
+    mode_group.add_argument(
+        "--both-local", action="store_true",
+        help=(
+            "iOS Simulator + Android Emulator simultaneously. "
+            "Patches iOS to 127.0.0.1 and Android to 10.0.2.2 — "
+            "the correct loopback alias for each. Skips ngrok."
+        ),
+    )
 
     parser.add_argument(
         "--no-server", action="store_true",
@@ -255,32 +263,46 @@ def main() -> None:
 
     # ── resolve mode ─────────────────────────────────────────────────────────
     if args.simulator:
-        mode_label  = "Simulator (loopback)"
-        new_base_url = f"http://127.0.0.1:{args.port}"
-        bind_host   = "127.0.0.1"
+        mode_label    = "Simulator (loopback)"
+        new_base_url  = f"http://127.0.0.1:{args.port}"
+        android_url   = new_base_url          # same — not used separately
+        bind_host     = "127.0.0.1"
 
     elif args.android_emulator:
-        mode_label  = "Android Emulator (10.0.2.2 → host loopback)"
-        new_base_url = f"http://10.0.2.2:{args.port}"
-        bind_host   = "127.0.0.1"
+        mode_label    = "Android Emulator (10.0.2.2 → host loopback)"
+        new_base_url  = f"http://10.0.2.2:{args.port}"
+        android_url   = new_base_url
+        bind_host     = "127.0.0.1"
+
+    elif args.both_local:
+        mode_label    = "iOS Simulator + Android Emulator (split loopback)"
+        new_base_url  = f"http://127.0.0.1:{args.port}"   # iOS
+        android_url   = f"http://10.0.2.2:{args.port}"    # Android
+        bind_host     = "127.0.0.1"
 
     elif args.local:
-        mode_label  = "Physical device — LAN Wi-Fi"
-        ip           = detect_lan_ip()
-        new_base_url = f"http://{ip}:{args.port}"
-        bind_host   = "0.0.0.0"
+        mode_label    = "Physical device — LAN Wi-Fi"
+        ip            = detect_lan_ip()
+        new_base_url  = f"http://{ip}:{args.port}"
+        android_url   = new_base_url
+        bind_host     = "0.0.0.0"
 
     else:
-        mode_label  = "Ngrok — public HTTPS / cellular"
-        bind_host   = "0.0.0.0"
+        mode_label    = "Ngrok — public HTTPS / cellular"
+        bind_host     = "0.0.0.0"
         print("→ Resolving ngrok tunnel…")
-        new_base_url = launch_ngrok(args.port)
+        new_base_url  = launch_ngrok(args.port)
+        android_url   = new_base_url
 
     # ── banner ────────────────────────────────────────────────────────────────
     print("=" * 60)
     print(f"  Smart Saver dev orchestrator")
     print(f"  Mode            : {mode_label}")
-    print(f"  iOS/Android URL : {new_base_url}")
+    if android_url != new_base_url:
+        print(f"  iOS URL         : {new_base_url}")
+        print(f"  Android URL     : {android_url}")
+    else:
+        print(f"  iOS/Android URL : {new_base_url}")
     print(f"  Server bind     : {bind_host}:{args.port}")
     print("=" * 60)
 
@@ -292,7 +314,7 @@ def main() -> None:
 
     # ── patch Android Kotlin constants ────────────────────────────────────────
     print("\n→ Patching Android Kotlin constants…")
-    any(patch_swift_url(p, new_base_url) for p in ANDROID_FILES_TO_PATCH)
+    any(patch_swift_url(p, android_url) for p in ANDROID_FILES_TO_PATCH)
 
     # ── optional Android build ────────────────────────────────────────────────
     if args.android_build:
@@ -309,7 +331,11 @@ def main() -> None:
     print()
     if args.simulator:
         print("Tip: select an iOS 17+ Simulator in Xcode, then ⌘R.")
-        print("     For Android Emulator, use --android-emulator instead.")
+        print("     To run both simultaneously, use --both-local instead.")
+    elif args.both_local:
+        print("Tip: iOS Simulator uses 127.0.0.1 and Android Emulator uses 10.0.2.2 —")
+        print("     both reach the same uvicorn server on your Mac.")
+        print("     Rebuild both apps after patching (⌘R in Xcode, ▶ in Android Studio).")
     elif getattr(args, 'android_emulator', False):
         print("Tip: start an Android Emulator in Android Studio, then run/install the APK.")
         print(f"  Server reachable from emulator at: {new_base_url}")

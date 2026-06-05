@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-local dev-sim test clean
+.PHONY: setup dev dev-local dev-sim dev-android dev-both test clean
 
 PYTHON = venv/bin/python
 PIP    = venv/bin/pip
@@ -16,6 +16,12 @@ dev-local:
 
 dev-sim:
 	$(PYTHON) run_dev.py --simulator
+
+dev-android:
+	$(PYTHON) run_dev.py --android-emulator
+
+dev-both:
+	$(PYTHON) run_dev.py --both-local
 
 test:
 	$(PYTHON) tests/test_smoke.py
