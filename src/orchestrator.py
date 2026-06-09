@@ -10,6 +10,7 @@ from src.schemas import (
     ArticleResult,
     ExtractedEntities,
     IngestionResult,
+    JobStatus,
     SourceType,
 )
 from src.storage import VectorStoreManager
@@ -115,10 +116,18 @@ class IngestionOrchestrator:
         """The heavy pipeline. Designed to run inside FastAPI's
         `BackgroundTasks` after a 202 has already been returned.
 
+        State machine lifecycle
+        -----------------------
+        PENDING (placeholder written by `create_placeholder`)
+          → EXTRACTING  (downloading / scraping / transcribing)
+          → ANALYZING   (LLM categorisation + summarisation)
+          → COMPLETED   (full row upserted into vector store)
+          → FAILED      (any hard error at any stage)
+
         **Invariant**: this function NEVER returns leaving a row in
-        `status="processing"`. The placeholder must transition to either
-        `completed` (success) or `failed` (anything else) before we
-        unwind. Three concentric layers guarantee that:
+        `status="processing"` (PENDING). The placeholder must transition
+        to either COMPLETED or FAILED before we unwind. Three concentric
+        layers guarantee that:
 
           1. Hard-fail cases (classify=UNKNOWN, extraction error,
              empty aggregated_text, missing analysis) explicitly call
@@ -134,27 +143,36 @@ class IngestionOrchestrator:
         """
         completed = False
         try:
+            # ── Stage 1: EXTRACTING ──────────────────────────────────────
+            # Broadcast that we're now actively downloading / scraping.
+            self._update_status_safely(url, store, JobStatus.EXTRACTING)
+
             try:
-                result = self.ingest(
-                    url,
-                    analyze=analyze,
-                    store=store,
-                    existing_categories=existing_categories,
-                )
+                source_type = classify(url)
+
+                if source_type is SourceType.VIDEO:
+                    video = self._video.extract(url)
+                    result = IngestionResult(url=url, source_type=source_type, video=video)
+                elif source_type is SourceType.ARTICLE:
+                    article = self._article.extract(url)
+                    result = IngestionResult(url=url, source_type=source_type, article=article)
+                else:
+                    self._mark_failed_safely(url, store, f"unsupported_source_type:{source_type.value}")
+                    logger.warning("Background ingest: unsupported source type for %s", url)
+                    return
+
             except BaseException as exc:
-                self._mark_failed_safely(url, store, f"{type(exc).__name__}: {exc}")
-                logger.exception("Background ingest raised for %s", url)
+                self._mark_failed_safely(url, store, f"extraction_raised:{type(exc).__name__}: {exc}")
+                logger.exception("Background ingest raised during extraction for %s", url)
                 return
 
-            # ----- Hard-fail cases reported via the result envelope -----
-            if result.source_type is SourceType.UNKNOWN or result.error:
-                reason = result.error or f"unsupported_source_type:{result.source_type.value}"
-                self._mark_failed_safely(url, store, reason)
-                logger.warning("Background ingest soft-failed for %s: %s", url, reason)
+            # Hard-fail: result envelope carries an error flag.
+            if result.error:
+                self._mark_failed_safely(url, store, result.error)
+                logger.warning("Background ingest soft-failed (result.error) for %s: %s", url, result.error)
                 return
 
-            # The extractor's own metadata.error (e.g. yt_dlp_failed)
-            # doesn't raise to the orchestrator. Surface it explicitly.
+            # Hard-fail: extractor stored its own error in metadata without raising.
             extractor_error = (
                 (result.video and result.video.metadata.get("error"))
                 or (result.article and result.article.metadata.get("error"))
@@ -164,21 +182,43 @@ class IngestionOrchestrator:
                 logger.warning("Background ingest extractor error for %s: %s", url, extractor_error)
                 return
 
-            # Empty content — yt-dlp / trafilatura returned nothing
-            # usable. Without this check, add_item silently refuses
-            # and the placeholder stays in `processing` forever.
+            # Hard-fail: nothing usable came back — add_item would silently
+            # refuse and the placeholder would stay in EXTRACTING forever.
             if not result.aggregated_text.strip():
-                self._mark_failed_safely(url, store, "extraction returned no content")
+                self._mark_failed_safely(url, store, "extraction_returned_no_content")
                 logger.warning("Background ingest produced empty text for %s", url)
                 return
 
-            # Analysis was requested but didn't attach — LLM failure.
+            # ── Stage 2: ANALYZING ───────────────────────────────────────
+            # Extraction succeeded. Broadcast that LLM work is starting.
+            self._update_status_safely(url, store, JobStatus.ANALYZING)
+
+            if analyze:
+                try:
+                    cats = existing_categories
+                    if cats is None and store:
+                        cats = self._get_or_make_store().get_all_categories()
+                        if cats:
+                            logger.info("Auto-fed %d existing categories to LLM: %s", len(cats), cats)
+                    result.analysis = self._get_or_make_llm().analyze(
+                        result, existing_categories=cats,
+                    )
+                except BaseException as exc:
+                    self._mark_failed_safely(url, store, f"analysis_raised:{type(exc).__name__}: {exc}")
+                    logger.exception("Background ingest raised during analysis for %s", url)
+                    return
+
+            # Hard-fail: analysis was requested but didn't attach.
             if analyze and result.analysis is None:
                 self._mark_failed_safely(url, store, "analysis_missing")
                 logger.warning("Background ingest missing analysis for %s", url)
                 return
 
-            # ----- Happy path -----
+            # ── Stage 3: COMPLETED ───────────────────────────────────────
+            if store and result.analysis is not None:
+                result.status = JobStatus.COMPLETED
+                self._get_or_make_store().add_item(url, result)
+
             cat = result.analysis.suggested_category if result.analysis else "(no analysis)"
             logger.info("Background ingest done for %s → category=%s", url, cat)
             completed = True
@@ -188,13 +228,27 @@ class IngestionOrchestrator:
             self._mark_failed_safely(url, store, f"{type(exc).__name__}: {exc}")
             logger.exception("Outer guard fired for %s", url)
         finally:
-            # Backstop invariant: if we somehow exited without either
-            # completing or failing the row, flip it to failed here so
-            # the iOS UI never shows a stuck-forever placeholder.
+            # Backstop invariant: if we somehow exited without reaching
+            # COMPLETED or FAILED, force-flip the row so the mobile client
+            # never shows a stuck-forever placeholder.
             if not completed and store:
                 self._force_fail_if_still_processing(url)
 
     # ---------------------------------------------------------------- helpers
+    def _update_status_safely(self, url: str, store: bool, status: JobStatus) -> None:
+        """Push a status transition to the vector store without raising.
+
+        Silent no-op when `store=False` (e.g. CLI dry-run mode) or when
+        the store call itself fails — a missed status update must never
+        abort the pipeline.
+        """
+        if not store:
+            return
+        try:
+            self._get_or_make_store().update_status(url, status.value)
+        except Exception:
+            logger.exception("update_status raised for %s → %s", url, status.value)
+
     def _mark_failed_safely(self, url: str, store: bool, reason: str) -> None:
         if not store:
             return
@@ -204,15 +258,21 @@ class IngestionOrchestrator:
             logger.exception("mark_failed itself raised for %s", url)
 
     def _force_fail_if_still_processing(self, url: str) -> None:
+        """Backstop: flip any in-flight status to FAILED.
+
+        Checks for every non-terminal state (processing / extracting /
+        analyzing) so no intermediate stage can leave a row stuck forever.
+        """
+        _terminal = {JobStatus.COMPLETED.value, JobStatus.FAILED.value}
         try:
             hit = self._get_or_make_store().get_by_url(url)
         except Exception:
             logger.exception("get_by_url failed in finally guard for %s", url)
             return
-        if hit is not None and hit.metadata.get("status") == "processing":
+        if hit is not None and hit.metadata.get("status") not in _terminal:
             logger.warning(
-                "Finally-guard tripped for %s — row still in 'processing'; force-failing.",
-                url,
+                "Finally-guard tripped for %s — row in non-terminal status=%r; force-failing.",
+                url, hit.metadata.get("status"),
             )
             self._mark_failed_safely(url, True, "pipeline ended without completion")
 

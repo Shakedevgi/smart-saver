@@ -23,6 +23,12 @@ from typing import Any
 
 import ollama
 from pydantic import ValidationError
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import settings
 from src.logger import get_logger
@@ -191,23 +197,40 @@ class LLMAnalyzer:
         logger.info("Calling Ollama model=%s …", self.model)
 
         try:
-            response = self._client.chat(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                format=schema,
-                options=self._chat_options(),
-            )
+            response = self._chat_with_retry(user_prompt, schema)
         except Exception as exc:
-            logger.exception("Ollama chat call failed")
+            logger.exception("Ollama chat call failed (all retries exhausted)")
             return self._error_fallback(f"ollama_error: {type(exc).__name__}: {exc}")
 
         raw = self._extract_message_content(response)
         return self._parse(raw)
 
     # ----------------------------------------------------------------- helpers
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def _chat_with_retry(self, user_prompt: str, schema: dict) -> Any:
+        """Inner Ollama call that Tenacity retries on transient connection errors.
+
+        `ConnectionError` / `TimeoutError` / `OSError` cover the cases where
+        the local Ollama daemon is briefly unreachable or slow to respond —
+        e.g. the model is still loading into memory on the first call.
+        `ValidationError` and bad-JSON responses are NOT retried here because
+        they're deterministic failures that the `_parse` layer handles.
+        """
+        return self._client.chat(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            format=schema,
+            options=self._chat_options(),
+        )
+
     def _chat_options(self) -> dict[str, Any]:
         opts: dict[str, Any] = {"temperature": self.temperature}
         if settings.ollama_num_ctx is not None:

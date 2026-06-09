@@ -1,10 +1,4 @@
-# 📑 SmartSaver — AI-Powered Link Archiver
-
-![Tests](https://github.com/Shakedevgi/smart-saver/actions/workflows/ci.yml/badge.svg)
-
-> **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 
-
-**SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone or Android device, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
+python run_dev.py --android-emulator or Android device, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
 
 The server runs on your Mac (or any machine), tunnelled to the public internet via **ngrok** so both mobile clients work on cellular anywhere in the world.
 
@@ -20,7 +14,7 @@ The server runs on your Mac (or any machine), tunnelled to the public internet v
 | Platform | Status | Notes |
 |---|---|---|
 | iOS (iPhone) | ✅ Production | SwiftUI app + Share Extension |
-| Android | 🧪 Beta | Jetpack Compose app + Share Target — compiled & running, not field-tested yet |
+| Android | ✅ Production | Jetpack Compose app + Share Target |
 | Backend (Mac) | ✅ Production | FastAPI + ChromaDB + Ollama |
 
 ---
@@ -107,9 +101,7 @@ Settings → Privacy & Security → **Developer Mode** → ON → restart → co
 
 ---
 
-## 🤖 Android Setup (Beta)
-
-> The Android client compiles cleanly and runs on the emulator. It hasn't been through extended real-device field testing yet — treat it as a solid beta.
+## 🤖 Android Setup
 
 ### Prerequisites
 
@@ -202,7 +194,8 @@ Coverage: URL classification & sanitization · ChromaDB round-trip · semantic s
 | 🕐 Chronological order | ✅ | ✅ | Browse view always shows newest saves at the top via `created_at` Unix timestamp. |
 | ✏️ Full CRUD | ✅ | ✅ | Swipe-to-delete, tap-to-edit (title/summary/category), add button for manual ingestion, smart category deletion. |
 | 🎨 Premium dark UI | ✅ | ✅ | Midnight-blue gradient, electric-blue accent (#3E86F8), branded card borders. |
-| 🔄 Status lifecycle | ✅ | ✅ | Every item transitions `processing → completed / failed` with badge colours (yellow pulse → normal / red). |
+| 🔄 Status lifecycle | ✅ | ✅ | Every item transitions through a 4-stage state machine: `pending → extracting → analyzing → completed / failed` with badge colours. |
+| 🔁 Automatic retries | ✅ | ✅ | Transient network failures (DNS hiccups, Ollama loading) are retried up to 3× with exponential back-off via **Tenacity**. |
 | 📂 Category management | ✅ | ✅ | Rename, delete, or move items to General — all synced to the backend. |
 
 ---
@@ -223,6 +216,7 @@ Coverage: URL classification & sanitization · ChromaDB round-trip · semantic s
 | Audio transcription | **faster-whisper** (`base` model, CPU / Apple Silicon) |
 | Video OCR | **EasyOCR** (frame sampling via OpenCV) |
 | Data models | **Pydantic v2** |
+| Resilience | **Tenacity** — exponential back-off retries on HTTP fetch and Ollama calls; `JobStatus` state machine (`pending → extracting → analyzing → completed / failed`) |
 | Tunnel | **ngrok** — permanent static domain, works on cellular |
 
 ### iOS
@@ -234,7 +228,7 @@ Coverage: URL classification & sanitization · ChromaDB round-trip · semantic s
 | Networking | `URLSession` async/await, `JSONDecoder(.convertFromSnakeCase)` |
 | Project generation | **XcodeGen** — `project.yml` → `.xcodeproj`, signing auto-selected |
 
-### Android (Beta)
+### Android
 
 | Layer | Technology |
 |---|---|
@@ -274,7 +268,8 @@ LLMAnalyzer (Ollama / llama3)
        │
        ▼
 VectorStoreManager (ChromaDB)
-   status: processing → completed / failed
+   state machine: pending → extracting → analyzing → completed / failed
+   retries: Tenacity exponential back-off on network + Ollama errors
        │
        ▼
 iOS Dashboard  /  Android Dashboard
@@ -286,9 +281,6 @@ iOS Dashboard  /  Android Dashboard
 ---
 
 ## ⚠️ Known Limitations
-
-### Android Beta
-The Android client has not undergone extended real-device field testing. It compiles cleanly (AGP 9.2.1 / Gradle 9.4.1 / Kotlin 2.3.10), runs correctly on the emulator, and successfully POSTs to the backend. Real-device edge cases (deep-link handling from every app, all Android OEM share sheets, background restrictions) are untested.
 
 ### Facebook
 Facebook's aggressive anti-bot measures mean automated scraping of FB posts/reels is unreliable without auth cookies. Shared FB links are attempted through the standard pipeline; if they fail they land as red **"Failed"** rows. Use the **`+` manual ingestion** button as a fallback.
@@ -303,7 +295,6 @@ Whisper runs on CPU by default. `WHISPER_DEVICE=metal` is available for Apple Si
 
 ## 🔮 Roadmap
 
-- [ ] **Android: real-device field testing** and Play Store signing config
 - [ ] Server-sent events (SSE) to push `processing → completed` status updates in real time (no pull-to-refresh needed)
 - [ ] **Retry button** on red "Failed" rows — re-POST the same URL with one tap
 - [ ] **Per-category item counts** shown on each category chip

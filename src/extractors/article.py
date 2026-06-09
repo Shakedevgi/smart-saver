@@ -22,6 +22,12 @@ from typing import Any
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import settings
 from src.extractors.base import BaseExtractor
@@ -66,6 +72,28 @@ class ArticleExtractor(BaseExtractor[ArticleResult]):
         return result
 
     # ------------------------------------------------------------------ helpers
+    @retry(
+        retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        reraise=False,
+    )
+    def _fetch_html_with_retry(self, url: str, headers: dict) -> requests.Response:
+        """Inner fetch that Tenacity will retry on transient network errors.
+
+        Only `ConnectionError` and `Timeout` are retried — those are the
+        errors that go away on their own (flaky DNS, brief server hiccup).
+        HTTP errors (4xx/5xx) are NOT retried because they won't change.
+        """
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=settings.http_timeout_sec,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return response
+
     def _fetch_html(self, url: str) -> str | None:
         headers = {
             "User-Agent": settings.http_user_agent,
@@ -73,16 +101,13 @@ class ArticleExtractor(BaseExtractor[ArticleResult]):
             "Accept-Language": settings.http_accept_language,
         }
         try:
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=settings.http_timeout_sec,
-                allow_redirects=True,
-            )
-            response.raise_for_status()
+            response = self._fetch_html_with_retry(url, headers)
             return response.text
         except requests.RequestException:
-            logger.exception("HTTP fetch failed for %s", url)
+            logger.exception("HTTP fetch failed for %s (all retries exhausted)", url)
+            return None
+        except Exception:
+            logger.exception("Unexpected error fetching %s", url)
             return None
 
     def _parse_with_trafilatura(self, html: str, url: str) -> dict[str, Any]:

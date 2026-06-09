@@ -23,3 +23,6 @@ chromadb>=1.0
 # Step 4 — HTTP API
 fastapi>=0.110
 uvicorn[standard]>=0.27
+
+# Step 5 — Resilience: retry logic & state machine
+tenacity>=8.2

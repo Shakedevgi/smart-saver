@@ -270,6 +270,37 @@ class VectorStoreManager:
         logger.info("Deleted category %r — %d items removed", name, len(ids))
         return len(ids)
 
+    def update_status(self, url: str, status: str) -> bool:
+        """Flip a row's status field in place to reflect pipeline progress.
+
+        Used by the orchestrator to broadcast state transitions
+        (extracting → analyzing → completed) so the mobile client can show
+        a meaningful progress indicator rather than a generic spinner.
+
+        No-ops silently if the row doesn't exist yet (race condition on
+        very fast pipelines where the placeholder write hasn't committed).
+        """
+        try:
+            existing = self._collection.get(ids=[url], include=["metadatas"])
+        except Exception:
+            logger.exception("update_status could not read %s", url)
+            return False
+
+        if not (existing.get("ids") or []):
+            logger.debug("update_status: no row yet for %s — skipping", url)
+            return False
+
+        meta = (existing.get("metadatas") or [{}])[0] or {}
+        meta["status"] = status
+        try:
+            self._collection.update(ids=[url], metadatas=[meta])
+        except Exception:
+            logger.exception("update_status Chroma update failed for %s", url)
+            return False
+
+        logger.debug("Status %s → %r", url, status)
+        return True
+
     def mark_failed(self, url: str, error: str) -> bool:
         """Flip an existing row's status to "failed" with the error reason.
 

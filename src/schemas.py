@@ -23,6 +23,23 @@ class SourceType(str, Enum):
     UNKNOWN = "unknown"
 
 
+class JobStatus(str, Enum):
+    """Explicit lifecycle for every ingestion job.
+
+    Transitions (happy path):  PENDING → EXTRACTING → ANALYZING → COMPLETED
+    Failure at any stage:      * → FAILED
+
+    Using a string enum means the values serialize to plain strings in
+    Chroma metadata and API responses with no extra conversion.
+    """
+
+    PENDING = "processing"    # placeholder row written, pipeline not yet started
+    EXTRACTING = "extracting" # downloading / scraping / transcribing content
+    ANALYZING = "analyzing"   # LLM categorization + summarization in progress
+    COMPLETED = "completed"   # full pipeline finished successfully
+    FAILED = "failed"         # pipeline raised or produced no usable output
+
+
 class _Base(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
