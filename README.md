@@ -1,4 +1,10 @@
-python run_dev.py --android-emulator or Android device, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
+# 📑 SmartSaver — AI-Powered Link Archiver
+
+![Tests](https://github.com/Shakedevgi/smart-saver/actions/workflows/ci.yml/badge.svg)
+
+> **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 
+
+**SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone or Android device, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
 
 The server runs on your Mac (or any machine), tunnelled to the public internet via **ngrok** so both mobile clients work on cellular anywhere in the world.
 
@@ -41,6 +47,7 @@ make setup       # creates venv + installs all dependencies
 ```
 
 Or manually:
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -66,6 +73,7 @@ python run_dev.py --android-emulator
 4. Starts uvicorn bound to `0.0.0.0:8000`
 
 Optional Android build flag:
+
 ```bash
 python run_dev.py --android-emulator --android-build   # also runs gradlew assembleDebug
 ```
@@ -258,18 +266,17 @@ FastAPI  →  202 Accepted  →  "Saved!" (< 1 s)
        │
        │  asyncio.to_thread (non-blocking)
        ▼
-Extraction layer
+Extraction layer                          [status: extracting]
    ├── ArticleExtractor   trafilatura → BS4 fallback
    └── VideoExtractor     yt-dlp → faster-whisper → EasyOCR
-       │
+       │  Tenacity retries on transient network errors
        ▼
-LLMAnalyzer (Ollama / llama3)
+LLMAnalyzer (Ollama / llama3)             [status: analyzing]
    • dynamic category  • summary  • key insights  • entities
-       │
+       │  Tenacity retries on Ollama connection errors
        ▼
-VectorStoreManager (ChromaDB)
+VectorStoreManager (ChromaDB)             [status: completed / failed]
    state machine: pending → extracting → analyzing → completed / failed
-   retries: Tenacity exponential back-off on network + Ollama errors
        │
        ▼
 iOS Dashboard  /  Android Dashboard
@@ -295,7 +302,7 @@ Whisper runs on CPU by default. `WHISPER_DEVICE=metal` is available for Apple Si
 
 ## 🔮 Roadmap
 
-- [ ] Server-sent events (SSE) to push `processing → completed` status updates in real time (no pull-to-refresh needed)
+- [ ] Server-sent events (SSE) to push live status updates to the mobile client (no pull-to-refresh needed)
 - [ ] **Retry button** on red "Failed" rows — re-POST the same URL with one tap
 - [ ] **Per-category item counts** shown on each category chip
 - [ ] **App Group** shared container (iOS) so the Share Extension can cache categories offline
