@@ -353,10 +353,11 @@ class VectorStoreManager:
             return []
 
         hits = self._hydrate_query(res)
-        # Only apply the distance threshold on open-ended semantic queries.
-        # When the caller already filtered by category they want all matching
-        # items in that bucket regardless of how the query string scores.
-        if category is not None:
+        # Skip the distance threshold for browse-mode calls — either a
+        # category filter is active (caller already scoped the result set)
+        # or the iOS client sent the "everything" sentinel which means
+        # "show me all items", not a real semantic query.
+        if category is not None or query.strip().lower() == "everything":
             return hits
         return [h for h in hits if h.distance is None or h.distance < settings.search_distance_threshold]
 
