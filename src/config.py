@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # --------------------------------------------------------- vector storage
     chroma_path: Path = PROJECT_ROOT / "data" / "chroma"
     chroma_collection: str = "smart_saver_items"
+    # Cosine distance threshold for semantic search (0.0 = perfect match,
+    # 1.0 = completely unrelated). Results above this score are dropped so
+    # irrelevant items never surface when nothing in the library is close
+    # enough to the query.
+    search_distance_threshold: float = 0.85
     # Which embedding backend Chroma should use.
     #   "default"  → chromadb's bundled ONNX all-MiniLM-L6-v2 (no daemon, ~80 MB)
     #   "ollama"   → call the local Ollama daemon; needs `ollama pull <model>`

@@ -352,7 +352,13 @@ class VectorStoreManager:
             logger.exception("Chroma query failed (query=%r)", query)
             return []
 
-        return self._hydrate_query(res)
+        hits = self._hydrate_query(res)
+        # Only apply the distance threshold on open-ended semantic queries.
+        # When the caller already filtered by category they want all matching
+        # items in that bucket regardless of how the query string scores.
+        if category is not None:
+            return hits
+        return [h for h in hits if h.distance is None or h.distance < settings.search_distance_threshold]
 
     def get_all_categories(self) -> list[str]:
         """Unique sorted list of every category value seen in the store.
