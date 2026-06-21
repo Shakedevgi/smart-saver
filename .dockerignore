@@ -1,0 +1,24 @@
+# Never bake secrets into the image
+.env
+.env.*
+
+# Dev tooling
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Local data — storage is Supabase in prod
+data/
+
+# Mobile apps, tests, docs — not needed at runtime
+ios/
+android/
+tests/
+*.md
+MIGRATION.md
+
+# Git
+.git/
+.github/
