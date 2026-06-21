@@ -18,7 +18,7 @@ from typing import Any
 import yt_dlp
 from google import genai
 from google.genai import types
-from google.genai.errors import ServerError
+from google.genai.errors import ClientError, ServerError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.config import settings
@@ -247,6 +247,12 @@ class VideoExtractor(BaseExtractor[VideoResult]):
             self._delete_file(file_ref)
 
     # ---------------------------------------------------------- gemini helpers
+    @retry(
+        retry=retry_if_exception_type((ServerError, ClientError)),
+        wait=wait_exponential(multiplier=2, min=10, max=90),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    )
     def _upload_and_wait(self, file_path: Path, mime_type: str):
         """Upload a file to Gemini File API and poll until it is ACTIVE."""
         file_ref = self._get_client().files.upload(
@@ -272,9 +278,9 @@ class VideoExtractor(BaseExtractor[VideoResult]):
             logger.warning("Could not delete Gemini file %s", file_ref.name)
 
     @retry(
-        retry=retry_if_exception_type(ServerError),
-        wait=wait_exponential(multiplier=1, min=2, max=15),
-        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type((ServerError, ClientError)),
+        wait=wait_exponential(multiplier=2, min=10, max=90),
+        stop=stop_after_attempt(5),
         reraise=True,
     )
     def _generate_with_retry(self, contents: list) -> Any:

@@ -22,7 +22,7 @@ import json
 
 from google import genai
 from google.genai import types
-from google.genai.errors import ServerError
+from google.genai.errors import ClientError, ServerError
 from pydantic import ValidationError
 from tenacity import (
     retry,
@@ -222,9 +222,9 @@ class LLMAnalyzer:
 
     # ----------------------------------------------------------------- helpers
     @retry(
-        retry=retry_if_exception_type(ServerError),
-        wait=wait_exponential(multiplier=1, min=2, max=15),
-        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type((ServerError, ClientError)),
+        wait=wait_exponential(multiplier=2, min=10, max=90),
+        stop=stop_after_attempt(5),
         reraise=True,
     )
     def _chat_with_retry(self, user_prompt: str):
