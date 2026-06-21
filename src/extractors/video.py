@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -88,24 +89,32 @@ class VideoExtractor(BaseExtractor[VideoResult]):
                 work_dir, prefix="audio",
                 allowed_extensions=(".mp3", ".m4a", ".wav", ".aac", ".opus"),
             )
-            if audio_path is not None:
-                transcript, language = self._transcribe(audio_path)
-                result.transcript = transcript
-                result.detected_language = language
-            else:
-                logger.warning("No audio file found in %s — skipping transcription.", work_dir)
-
             video_path = self._find_file(
                 work_dir, prefix="video",
                 allowed_extensions=(".mp4", ".m4v", ".mov", ".mkv", ".avi"),
             )
-            if video_path is not None:
-                segments, frames = self._ocr_frames(video_path)
+
+            # Run transcription and OCR in parallel to halve upload wait time.
+            futures = {}
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                if audio_path is not None:
+                    futures["audio"] = pool.submit(self._transcribe, audio_path)
+                else:
+                    logger.warning("No audio file found in %s — skipping transcription.", work_dir)
+                if video_path is not None:
+                    futures["video"] = pool.submit(self._ocr_frames, video_path)
+                else:
+                    logger.warning("No video file found in %s — skipping OCR.", work_dir)
+
+            if "audio" in futures:
+                transcript, language = futures["audio"].result()
+                result.transcript = transcript
+                result.detected_language = language
+            if "video" in futures:
+                segments, frames = futures["video"].result()
                 result.ocr_segments = segments
                 result.frames_sampled = frames
                 result.ocr_text = self._dedupe_ocr_lines(segments)
-            else:
-                logger.warning("No video file found in %s — skipping OCR.", work_dir)
 
             logger.info(
                 "Video done: title=%r, transcript_chars=%d, ocr_lines=%d",
