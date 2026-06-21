@@ -164,15 +164,19 @@ class VectorStoreManager:
 
     # =========================================================== supabase impl
     def _embed(self, text: str) -> list[float]:
+        import time
         import httpx
-        resp = httpx.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
-            headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
-            json={"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["embedding"]["values"]
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
+        headers = {"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"}
+        payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
+        for attempt in range(3):
+            resp = httpx.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            return resp.json()["embedding"]["values"]
+        resp.raise_for_status()  # unreachable but satisfies type checker
 
     def _sb_add_item(self, url: str, result: IngestionResult) -> bool:
         text = result.aggregated_text
@@ -331,6 +335,11 @@ class VectorStoreManager:
     ) -> list[SearchHit]:
         if not query.strip():
             return []
+
+        # "everything" = browse-all; skip embedding and fetch directly.
+        if query.strip().lower() == "everything":
+            return self._sb_browse_all(limit, category)
+
         try:
             embedding = self._embed(query)
             resp = self._sb.rpc("match_items", {
@@ -343,10 +352,20 @@ class VectorStoreManager:
             logger.exception("Supabase search failed (query=%r)", query)
             return []
 
-        # Skip distance threshold for category-filtered or browse-all queries.
-        if category is not None or query.strip().lower() == "everything":
+        if category is not None:
             return hits
         return [h for h in hits if h.distance is None or h.distance < settings.search_distance_threshold]
+
+    def _sb_browse_all(self, limit: int, category: str | None) -> list[SearchHit]:
+        try:
+            q = self._sb.table("items").select("*").neq("status", STATUS_PROCESSING).limit(limit)
+            if category:
+                q = q.eq("category", category)
+            resp = q.execute()
+            return [self._sb_row_to_hit(row) for row in (resp.data or [])]
+        except Exception:
+            logger.exception("Supabase browse_all failed")
+            return []
 
     def _sb_get_all_categories(self) -> list[str]:
         try:
