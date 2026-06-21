@@ -65,7 +65,13 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            info = self._download(url, work_dir)
+            # Download audio and low-res video in parallel.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                audio_future = pool.submit(self._download, url, work_dir)
+                video_future = pool.submit(self._download_video_for_ocr, url, work_dir)
+            info = audio_future.result()
+            video_future.result()  # errors are logged inside, not fatal
+
             if info is None:
                 result.metadata["error"] = "yt_dlp_failed"
                 return result
@@ -166,6 +172,33 @@ class VideoExtractor(BaseExtractor[VideoResult]):
             return None
 
         return info
+
+    def _download_video_for_ocr(self, url: str, work_dir: Path) -> None:
+        """Download lowest-quality video for on-screen text extraction.
+
+        Runs in parallel with audio download. Failure is non-fatal — OCR
+        is simply skipped if no video file ends up in work_dir.
+        """
+        ydl_opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "outtmpl": {"default": str(work_dir / "video.%(ext)s")},
+            "format": (
+                "worstvideo[ext=mp4][height<=360]/"
+                "worstvideo[ext=mp4]/"
+                "worst[ext=mp4]/"
+                "worstvideo"
+            ),
+            "postprocessors": [
+                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
+            ],
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(url, download=True)
+        except Exception:
+            logger.warning("Video download for OCR failed (non-fatal) for %s", url)
 
     @staticmethod
     def _find_file(
