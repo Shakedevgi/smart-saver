@@ -14,8 +14,8 @@ pydantic-settings>=2.2
 typer>=0.12
 rich>=13.7
 
-# Step 2 — local LLM analysis
-ollama>=0.4
+# Step 2 — Gemini LLM analysis
+google-genai>=1.0
 
 # Step 3 — vector storage / semantic search
 chromadb>=1.0

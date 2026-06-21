@@ -1,4 +1,4 @@
-"""Local-LLM analysis layer.
+"""Gemini-backed analysis layer.
 
 Takes an `IngestionResult` already populated by Step 1 and returns a
 strict `AnalysisResult`: a category (dynamic — reuse an existing one or
@@ -7,11 +7,11 @@ summary, key insights, and a flexible bag of extracted entities.
 
 Implementation notes
 --------------------
-- We talk to a **local** Ollama daemon via the official `ollama` Python SDK.
-- Structured outputs are enforced by passing the Pydantic-generated JSON
-  schema as the `format` argument to `client.chat()` (supported by Ollama
-  ≥ 0.5). The model is constrained to emit JSON that validates against
-  the schema — we still call `model_validate_json` defensively.
+- We call **Gemini 2.5 Flash** via the `google-genai` SDK.
+- Structured outputs are enforced by passing `response_schema=AnalysisResult`
+  and `response_mime_type="application/json"` in `GenerateContentConfig`.
+  The model is constrained to emit JSON that validates against the schema —
+  we still call `model_validate_json` defensively.
 - Existing categories (if provided) are injected into the system prompt so
   the model prefers reusing them over inventing near-duplicates.
 """
@@ -19,9 +19,10 @@ Implementation notes
 from __future__ import annotations
 
 import json
-from typing import Any
 
-import ollama
+from google import genai
+from google.genai import types
+from google.genai.errors import ServerError
 from pydantic import ValidationError
 from tenacity import (
     retry,
@@ -155,18 +156,14 @@ class LLMAnalyzer:
     def __init__(
         self,
         model: str | None = None,
-        host: str | None = None,
         temperature: float | None = None,
         max_input_chars: int | None = None,
     ) -> None:
-        self.model = model or settings.ollama_model
-        self.host = host or settings.ollama_host
-        self.temperature = (
-            temperature if temperature is not None else settings.ollama_temperature
-        )
+        self.model_name = model or settings.gemini_model
+        self.temperature = temperature if temperature is not None else 0.2
         self.max_input_chars = max_input_chars or settings.llm_max_input_chars
-        self._client = ollama.Client(host=self.host, timeout=settings.ollama_request_timeout_sec)
-        logger.info("LLMAnalyzer ready: model=%s host=%s", self.model, self.host)
+        self._client = genai.Client(api_key=settings.gemini_api_key)
+        logger.info("LLMAnalyzer ready: model=%s", self.model_name)
 
     # ------------------------------------------------------------------ public
     def analyze(
@@ -193,60 +190,35 @@ class LLMAnalyzer:
             existing_categories=existing_categories or [],
         )
 
-        schema = AnalysisResult.model_json_schema()
-        logger.info("Calling Ollama model=%s …", self.model)
+        logger.info("Calling Gemini model=%s …", self.model_name)
 
         try:
-            response = self._chat_with_retry(user_prompt, schema)
+            response = self._chat_with_retry(user_prompt)
         except Exception as exc:
-            logger.exception("Ollama chat call failed (all retries exhausted)")
-            return self._error_fallback(f"ollama_error: {type(exc).__name__}: {exc}")
+            logger.exception("Gemini call failed (all retries exhausted)")
+            return self._error_fallback(f"gemini_error: {type(exc).__name__}: {exc}")
 
-        raw = self._extract_message_content(response)
-        return self._parse(raw)
+        return self._parse(response.text or "")
 
     # ----------------------------------------------------------------- helpers
     @retry(
-        retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+        retry=retry_if_exception_type(ServerError),
         wait=wait_exponential(multiplier=1, min=2, max=15),
         stop=stop_after_attempt(3),
         reraise=True,
     )
-    def _chat_with_retry(self, user_prompt: str, schema: dict) -> Any:
-        """Inner Ollama call that Tenacity retries on transient connection errors.
-
-        `ConnectionError` / `TimeoutError` / `OSError` cover the cases where
-        the local Ollama daemon is briefly unreachable or slow to respond —
-        e.g. the model is still loading into memory on the first call.
-        `ValidationError` and bad-JSON responses are NOT retried here because
-        they're deterministic failures that the `_parse` layer handles.
-        """
-        return self._client.chat(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            format=schema,
-            options=self._chat_options(),
+    def _chat_with_retry(self, user_prompt: str):
+        """Gemini call that Tenacity retries on transient server errors (5xx)."""
+        return self._client.models.generate_content(
+            model=self.model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=AnalysisResult,
+                temperature=self.temperature,
+            ),
         )
-
-    def _chat_options(self) -> dict[str, Any]:
-        opts: dict[str, Any] = {"temperature": self.temperature}
-        if settings.ollama_num_ctx is not None:
-            opts["num_ctx"] = settings.ollama_num_ctx
-        return opts
-
-    @staticmethod
-    def _extract_message_content(response: Any) -> str:
-        # `ollama.Client.chat` returns a Mapping-like ChatResponse. Be defensive.
-        try:
-            msg = response["message"] if isinstance(response, dict) else response.message
-            content = msg["content"] if isinstance(msg, dict) else msg.content
-        except (KeyError, AttributeError, TypeError):
-            logger.exception("Unexpected Ollama response shape: %r", response)
-            return ""
-        return content or ""
 
     def _build_user_prompt(
         self,
@@ -292,7 +264,7 @@ class LLMAnalyzer:
         try:
             return AnalysisResult.model_validate_json(raw)
         except ValidationError:
-            logger.exception("LLM JSON did not validate against AnalysisResult")
+            logger.exception("Gemini JSON did not validate against AnalysisResult")
         # One forgiving retry: maybe the model wrapped the JSON in extra text.
         try:
             parsed = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])

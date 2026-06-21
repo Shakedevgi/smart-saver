@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     ollama_embed_model: str = "nomic-embed-text"
     chroma_telemetry: bool = False        # disable anonymized telemetry by default
 
+    # --------------------------------------------------------------- gemini
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
+    # --------------------------------------------------------------- supabase
+    supabase_url: str = ""
+    supabase_key: str = ""              # anon / service-role key
+
     # ---------------------------------------------------------- http api server
     # 127.0.0.1 is safe for the iOS Simulator (shares host loopback).
     # Set SMART_SAVER_API_HOST=0.0.0.0 to expose on the LAN for a physical device.
