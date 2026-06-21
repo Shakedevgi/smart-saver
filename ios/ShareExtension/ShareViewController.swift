@@ -13,7 +13,7 @@
 import UIKit
 import UniformTypeIdentifiers
 
-private let kIngestEndpoint = URL(string: "http://10.0.2.2:8000/api/ingest")!
+private let kIngestEndpoint = URL(string: "https://smart-saver-324626661375.europe-west1.run.app/api/ingest")!
 private let kRequestTimeout: TimeInterval = 180  // video pipeline may need ASR + OCR
 
 final class ShareViewController: UIViewController {

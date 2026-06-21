@@ -3,11 +3,8 @@
 
 import Foundation
 
-/// Build-time default. Change this if your FastAPI server runs elsewhere.
-///   - iOS Simulator on this Mac → `https://cryptic-attire-statute.ngrok-free.dev`  (works as-is)
-///   - Physical iOS device on same Wi-Fi → `http://<your-mac-LAN-ip>:8000`
-///     and start uvicorn with `--host 0.0.0.0`.
-let kDefaultAPIBaseURL = URL(string: "https://cryptic-attire-statute.ngrok-free.dev")!
+/// Cloud Run backend — permanent, no ngrok or local server needed.
+let kDefaultAPIBaseURL = URL(string: "https://smart-saver-324626661375.europe-west1.run.app")!
 
 enum APIError: LocalizedError {
     case invalidResponse
