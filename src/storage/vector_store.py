@@ -168,7 +168,11 @@ class VectorStoreManager:
         import httpx
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
         headers = {"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"}
-        payload = {"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}}
+        payload = {
+            "model": "models/gemini-embedding-001",
+            "content": {"parts": [{"text": text}]},
+            "outputDimensionality": 768,
+        }
         for attempt in range(3):
             resp = httpx.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 429 and attempt < 2:
