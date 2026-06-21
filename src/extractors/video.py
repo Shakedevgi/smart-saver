@@ -131,47 +131,28 @@ class VideoExtractor(BaseExtractor[VideoResult]):
 
     # ------------------------------------------------------------------ yt-dlp
     def _download(self, url: str, work_dir: Path) -> dict[str, Any] | None:
-        """Download audio (mp3) + low-res mp4 in a single yt-dlp invocation.
+        """Download audio only (mp3) via yt-dlp.
 
-        Audio goes to `audio.<ext>`, video goes to `video.<ext>` so we can
-        locate them without parsing yt-dlp's return value.
+        Audio-only is ~10x smaller than video+audio merge, cutting download
+        time from several minutes to ~30 seconds for a typical social reel.
+        Video OCR is skipped when no video file is present — transcript from
+        audio covers the vast majority of useful content.
         """
         ydl_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
             "outtmpl": {
-                "default": str(work_dir / "video.%(ext)s"),
+                "default": str(work_dir / "audio.%(ext)s"),
             },
-            # Prefer mp4 + m4a streams ≤480p so OpenCV can read the file
-            # without a re-encode. Fall back through progressively looser
-            # selectors; the FFmpegVideoConvertor below catches any leftover.
-            "format": (
-                "bv*[ext=mp4][height<=480]+ba[ext=m4a]/"
-                "b[ext=mp4][height<=480]/"
-                "b[ext=mp4]/"
-                "bv*[height<=480]+ba/"
-                "b[height<=480]/"
-                "bv*+ba/b"
-            ),
-            "merge_output_format": "mp4",
+            "format": "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
             "postprocessors": [
-                # Safety net: if format selection fell back to webm/mkv,
-                # transcode the merged file to mp4 so OpenCV can read it.
-                {
-                    "key": "FFmpegVideoConvertor",
-                    "preferedformat": "mp4",
-                },
-                # Extract a clean mp3 from the (now-guaranteed) mp4 for Gemini.
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "5",
-                    "when": "post_process",
                 },
             ],
-            # `keepvideo=True` keeps the merged mp4 alongside the extracted mp3.
-            "keepvideo": True,
         }
 
         try:
@@ -183,11 +164,6 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         except Exception:
             logger.exception("yt-dlp crashed for %s", url)
             return None
-
-        # Normalise output names so `_find_file` can locate them deterministically.
-        mp3 = work_dir / "video.mp3"
-        if mp3.exists():
-            mp3.rename(work_dir / "audio.mp3")
 
         return info
 
