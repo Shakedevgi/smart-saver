@@ -4,9 +4,9 @@
 
 > **"Because your 'Saved' folder on Instagram is where links go to die, and your TikTok bookmarks are a digital hoarder's paradise."** 
 
-**SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone or Android device, and a local AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in the background, privately, while you keep scrolling.
+**SmartSaver** is a full-stack personal knowledge system: share any link from your iPhone or Android device, and a cloud AI pipeline extracts the content, transcribes any audio, reads on-screen text via OCR, summarises everything, and files it under a dynamically-assigned category — in under 20 seconds, while you keep scrolling.
 
-The server runs on your Mac (or any machine), tunnelled to the public internet via **ngrok** so both mobile clients work on cellular anywhere in the world.
+The backend runs on **Google Cloud Run** — always alive, zero infrastructure to maintain.
 
 <img width="18%" alt="MainScreen" src="https://github.com/user-attachments/assets/3077f9a9-66ed-4433-8eb4-1b3a91a1cb82" /> <img width="18%" alt="IGfilter" src="https://github.com/user-attachments/assets/c9a879b8-45f2-4d53-9465-d047788f7abf" />
 <img width="18%" alt="fullshare" src="https://github.com/user-attachments/assets/d5e1b9dc-8de1-4e48-9bfa-1b4dbfcb24a0" />
@@ -21,7 +21,7 @@ The server runs on your Mac (or any machine), tunnelled to the public internet v
 |---|---|---|
 | iOS (iPhone) | ✅ Production | SwiftUI app + Share Extension |
 | Android | ✅ Production | Jetpack Compose app + Share Target |
-| Backend (Mac) | ✅ Production | FastAPI + ChromaDB + Ollama |
+| Backend (Cloud) | ✅ Production | FastAPI on Google Cloud Run |
 
 ---
 
@@ -29,64 +29,90 @@ The server runs on your Mac (or any machine), tunnelled to the public internet v
 
 ### Prerequisites
 
-- **Mac** (Apple Silicon recommended — faster Whisper + EasyOCR)
-- **Python 3.11+** and a virtual environment
-- **Ollama** — install from [ollama.com](https://ollama.com), then `ollama pull llama3`
-- **ngrok** — install from [ngrok.com/download](https://ngrok.com/download), then authenticate once:
-  ```bash
-  ngrok config add-authtoken <your-token>   # token at dashboard.ngrok.com
-  ```
+- **Google Cloud** account with Cloud Run + Artifact Registry APIs enabled
+- **Gemini API key** — create one at [aistudio.google.com](https://aistudio.google.com) (requires billing enabled)
+- **Supabase** project with a `items` table and `pgvector` extension enabled
+- **Python 3.11+** for local development / running tests
+- **gcloud CLI** installed and authenticated
 
-### 1. Python backend
+### 1. Clone and configure
 
 ```bash
 git clone https://github.com/Shakedevgi/smart-saver.git
 cd smart-saver
-
-make setup       # creates venv + installs all dependencies
 ```
 
-Or manually:
+Required environment variables (set as Cloud Run secrets or a `.env` file for local dev):
+
+```
+SMART_SAVER_GEMINI_API_KEY=your_gemini_api_key
+SMART_SAVER_SUPABASE_URL=https://xxxx.supabase.co
+SMART_SAVER_SUPABASE_KEY=your_supabase_anon_or_service_key
+```
+
+### 2. Supabase schema (one-time)
+
+Run this in the Supabase SQL editor:
+
+```sql
+create extension if not exists vector;
+
+create table items (
+  url         text primary key,
+  status      text not null default 'processing',
+  title       text,
+  category    text,
+  summary     text,
+  source_type text,
+  embedding   vector(768),
+  metadata    jsonb,
+  created_at  timestamptz default now()
+);
+
+create or replace function match_items(
+  query_embedding vector(768),
+  match_count     int default 10,
+  filter_category text default null
+)
+returns setof items language plpgsql as $$
+begin
+  return query
+  select * from items
+  where status != 'processing'
+    and (filter_category is null or category = filter_category)
+  order by embedding <=> query_embedding
+  limit match_count;
+end;
+$$;
+```
+
+### 3. Deploy to Cloud Run
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+# Build container image
+gcloud builds submit \
+  --tag europe-west1-docker.pkg.dev/<PROJECT>/cloud-run-source-deploy/smart-saver:latest \
+  --project <PROJECT> --region europe-west1
+
+# Deploy (keep one instance warm so background tasks aren't killed)
+gcloud run deploy smart-saver \
+  --image europe-west1-docker.pkg.dev/<PROJECT>/cloud-run-source-deploy/smart-saver:latest \
+  --region europe-west1 \
+  --min-instances 1 \
+  --no-cpu-throttling \
+  --set-env-vars SMART_SAVER_GEMINI_API_KEY=...,SMART_SAVER_SUPABASE_URL=...,SMART_SAVER_SUPABASE_KEY=... \
+  --project <PROJECT>
+```
+
+`--min-instances=1 --no-cpu-throttling` is required: Cloud Run scales to 0 and throttles CPU after the 202 response, which would kill the still-running background pipeline.
+
+### 4. Local development
+
+```bash
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+uvicorn src.api.main:app --reload  # runs on 127.0.0.1:8000
 ```
-
-### 2. Start the dev orchestrator
-
-```bash
-make dev              # ngrok tunnel — works on cellular everywhere
-make dev-local        # LAN Wi-Fi fallback (same network only)
-make dev-sim          # iOS Simulator (loopback, 127.0.0.1)
-
-# Android Emulator (patches AppConfig.kt to 10.0.2.2)
-python run_dev.py --android-emulator
-```
-
-`make dev` / `run_dev.py` does everything in one command:
-
-1. Starts (or reuses) an ngrok tunnel on port 8000
-2. Patches `NetworkManager.swift`, `ShareViewController.swift` **and** `AppConfig.kt` with the public URL
-3. Runs `xcodegen generate` if any Swift constants changed
-4. Starts uvicorn bound to `0.0.0.0:8000`
-
-Optional Android build flag:
-
-```bash
-python run_dev.py --android-emulator --android-build   # also runs gradlew assembleDebug
-```
-
-### 3. Static ngrok domain (one-time, highly recommended)
-
-ngrok's free plan gives you **one permanent static domain** — claim it at `dashboard.ngrok.com/domains`. Once you have it, update the `launch_ngrok()` call in `run_dev.py`:
-
-```python
-["ngrok", "http", "--domain=your-domain.ngrok-free.app", str(port)]
-```
-
-Run `python run_dev.py --no-server --no-xcodegen` once to patch the permanent URL into the Swift **and** Kotlin files, rebuild both apps. You never need to rebuild because of a URL change again.
 
 ---
 
@@ -99,6 +125,7 @@ brew install xcodegen ffmpeg
 open ios/SmartSaver.xcodeproj
 ```
 
+- Point `kDefaultAPIBaseURL` in `NetworkManager.swift` to your Cloud Run service URL
 - Select your iPhone or Simulator in the Xcode scheme picker
 - **⌘R** — Xcode automatically picks your registered personal team; no manual signing configuration needed
 - First install: iPhone → Settings → General → **VPN & Device Management** → trust your Apple ID
@@ -118,16 +145,9 @@ Settings → Privacy & Security → **Developer Mode** → ON → restart → co
 
 ### Build from Android Studio
 
-```bash
-# 1. Start the backend pointing at the emulator loopback address
-python run_dev.py --android-emulator
-
-# 2. Open the Android project in Android Studio
-open -a "Android Studio" android/
-```
-
-- Android Studio syncs Gradle automatically on first open
-- Select your emulator in the device picker → **▶ Run**
+- Update the backend URL in `AppConfig.kt` to your Cloud Run service URL
+- Open the Android project in Android Studio — Gradle syncs automatically on first open
+- Select your device in the device picker → **▶ Run**
 
 ### Build from the terminal
 
@@ -152,29 +172,6 @@ $ANDROID_HOME/platform-tools/adb shell am start -n com.shakedivgi.smartsaver/.Ma
 4. On `202 Accepted` the sheet shows green "Saved!" and auto-dismisses in < 1 second
 5. Open the SmartSaver app → pull to refresh → item appears with **Processing…** badge, then flips to its full card
 
-### Physical Android device (LAN)
-
-```bash
-python run_dev.py --local    # patches AppConfig.kt to your Mac's LAN IP
-```
-
-Then build and deploy from Android Studio with your physical device selected.
-
----
-
-## 🖥️ Keep the server running while away
-
-For the app to work on cellular you just need your Mac running the server at home:
-
-```bash
-# Prevent the Mac from sleeping (run before make dev)
-caffeinate -i make dev
-```
-
-System Settings → Battery → Options → **"Prevent automatic sleeping on power adapter when display is off"** → ON.
-
-The ngrok tunnel (static domain) stays alive as long as the script runs. Both iOS and Android apps work from anywhere — cellular, different Wi-Fi, abroad — with zero extra setup.
-
 ---
 
 ## 🧪 Tests
@@ -186,7 +183,7 @@ make test
 
 Tests run automatically on every push via GitHub Actions (see the badge at the top).
 
-Coverage: URL classification & sanitization · ChromaDB round-trip · semantic search & category filter · all `/api/*` endpoints · async pipeline lifecycle (`processing → completed / failed`) · manual ingestion · category bulk-rename / cascade-delete · background task failure handling.
+Coverage: URL classification & sanitization · Supabase round-trip · semantic search & category filter · all `/api/*` endpoints · async pipeline lifecycle (`processing → completed / failed`) · manual ingestion · category bulk-rename / cascade-delete · background task failure handling.
 
 ---
 
@@ -194,16 +191,16 @@ Coverage: URL classification & sanitization · ChromaDB round-trip · semantic s
 
 | Feature | iOS | Android | Detail |
 |---|---|---|---|
-| ⚡ Sub-second share sheet | ✅ | ✅ | `POST /api/ingest` returns `202 Accepted` in <1 s. Heavy work runs in a background thread. |
-| 🧠 Local semantic search | ✅ | ✅ | ChromaDB + ONNX MiniLM embeddings. Search your entire library with natural language. |
-| 🏷️ Dynamic categorisation | ✅ | ✅ | The LLM reuses existing categories or invents a new one. No fixed taxonomy. |
+| ⚡ Sub-second share sheet | ✅ | ✅ | `POST /api/ingest` returns `202 Accepted` in <1 s. Heavy work runs in a Cloud Run background thread. |
+| 🧠 Semantic search | ✅ | ✅ | Supabase pgvector + `gemini-embedding-001` (768-dim). Search your entire library with natural language. |
+| 🏷️ Dynamic categorisation | ✅ | ✅ | Gemini 2.5 Flash reuses existing categories or invents a new one. No fixed taxonomy. |
 | ⚠️ Disambiguation UI | ✅ | ✅ | Low-confidence items get an orange **"Needs Review"** badge for manual review. |
 | 🌐 Source filter bar | ✅ | ✅ | One-tap pill filter: **All · Instagram · TikTok · YouTube · Article** — client-side, no extra network call. |
-| 🕐 Chronological order | ✅ | ✅ | Browse view always shows newest saves at the top via `created_at` Unix timestamp. |
+| 🕐 Chronological order | ✅ | ✅ | Browse view always shows newest saves at the top via `created_at` timestamp. |
 | ✏️ Full CRUD | ✅ | ✅ | Swipe-to-delete, tap-to-edit (title/summary/category), add button for manual ingestion, smart category deletion. |
 | 🎨 Premium dark UI | ✅ | ✅ | Midnight-blue gradient, electric-blue accent (#3E86F8), branded card borders. |
-| 🔄 Status lifecycle | ✅ | ✅ | Every item transitions through a 4-stage state machine: `pending → extracting → analyzing → completed / failed` with badge colours. |
-| 🔁 Automatic retries | ✅ | ✅ | Transient network failures (DNS hiccups, Ollama loading) are retried up to 3× with exponential back-off via **Tenacity**. |
+| 🔄 Status lifecycle | ✅ | ✅ | Every item transitions: `processing → completed / failed` with badge colours. |
+| 🔁 Automatic retries | ✅ | ✅ | Gemini API 429 / 5xx errors retried up to 5× with exponential back-off via **Tenacity**. |
 | 📂 Category management | ✅ | ✅ | Rename, delete, or move items to General — all synced to the backend. |
 
 ---
@@ -215,17 +212,16 @@ Coverage: URL classification & sanitization · ChromaDB round-trip · semantic s
 | Layer | Technology |
 |---|---|
 | API | **FastAPI** + **uvicorn** (async, CORS, BackgroundTasks) |
-| Background tasks | `asyncio.to_thread` — runs Whisper/EasyOCR in the OS thread pool so the event loop stays free |
-| Vector DB | **ChromaDB** (persistent, `data/chroma/`) |
-| Embeddings | ONNX `all-MiniLM-L6-v2` (bundled, ~80 MB, no extra deps) |
-| Local LLM | **Ollama** + `llama3` — structured output via `format=<json_schema>` |
+| Hosting | **Google Cloud Run** — `min-instances=1`, `no-cpu-throttling` keeps background pipeline alive after 202 |
+| Transcription | **Gemini 2.5 Flash** via Gemini File API — audio uploaded then transcribed in one API call |
+| Analysis | **Gemini 2.5 Flash** — dynamic category + summary + key insights + entities (structured JSON via `response_schema`) |
+| Embeddings | **gemini-embedding-001** — 768-dim vectors via direct REST call with `outputDimensionality: 768` |
+| Vector DB | **Supabase** (PostgreSQL + `pgvector`) — `match_items()` RPC for semantic search |
+| Video download | **yt-dlp** — `bestaudio` (for transcript) + `worstvideo[height<=360]` (for OCR) downloaded in parallel |
+| Video OCR | **EasyOCR** (frame sampling via OpenCV) — detects on-screen text (place names, prices, captions) |
 | Article extraction | **trafilatura** (primary) + BeautifulSoup fallback |
-| Video metadata | **yt-dlp** (YouTube, TikTok, Instagram, X, …) |
-| Audio transcription | **faster-whisper** (`base` model, CPU / Apple Silicon) |
-| Video OCR | **EasyOCR** (frame sampling via OpenCV) |
 | Data models | **Pydantic v2** |
-| Resilience | **Tenacity** — exponential back-off retries on HTTP fetch and Ollama calls; `JobStatus` state machine (`pending → extracting → analyzing → completed / failed`) |
-| Tunnel | **ngrok** — permanent static domain, works on cellular |
+| Resilience | **Tenacity** — exponential back-off on 429/5xx; `JobStatus` state machine (`processing → completed / failed`) |
 
 ### iOS
 
@@ -259,25 +255,25 @@ iPhone / Android Share Sheet
 iOS Share Extension  /  Android Share Activity
        │  POST /api/ingest  { url }
        ▼
-ngrok tunnel (HTTPS, public internet)
-       │  your-domain.ngrok-free.app
-       ▼
-FastAPI  →  202 Accepted  →  "Saved!" (< 1 s)
+Google Cloud Run — FastAPI
+       │  202 Accepted → "Saved!" (< 1 s)
        │
-       │  asyncio.to_thread (non-blocking)
+       │  BackgroundTasks (runs after response, CPU always allocated)
        ▼
-Extraction layer                          [status: extracting]
+Extraction layer                          [status: processing]
    ├── ArticleExtractor   trafilatura → BS4 fallback
-   └── VideoExtractor     yt-dlp → faster-whisper → EasyOCR
-       │  Tenacity retries on transient network errors
+   └── VideoExtractor (parallel downloads)
+         ├── yt-dlp bestaudio → Gemini File API upload → Gemini 2.5 Flash (transcript)
+         └── yt-dlp low-res video → OpenCV frame sampling → EasyOCR (on-screen text)
        ▼
-LLMAnalyzer (Ollama / llama3)             [status: analyzing]
+LLMAnalyzer (Gemini 2.5 Flash)
    • dynamic category  • summary  • key insights  • entities
-       │  Tenacity retries on Ollama connection errors
+   • structured JSON output enforced via response_schema
        ▼
-VectorStoreManager (ChromaDB)             [status: completed / failed]
-   state machine: pending → extracting → analyzing → completed / failed
-       │
+VectorStoreManager (Supabase + pgvector)  [status: completed / failed]
+   • gemini-embedding-001 → 768-dim vector
+   • upsert by URL into `items` table
+   • match_items() RPC for semantic search
        ▼
 iOS Dashboard  /  Android Dashboard
    • newest-first chronological sort
@@ -295,8 +291,8 @@ Facebook's aggressive anti-bot measures mean automated scraping of FB posts/reel
 ### Instagram & TikTok auth
 Some IG Reels and TikTok videos require cookies for yt-dlp to download audio. Public content works; auth-walled content may fail.
 
-### Whisper device
-Whisper runs on CPU by default. `WHISPER_DEVICE=metal` is available for Apple Silicon but requires validating the wheel version.
+### Gemini API rate limits
+The pipeline retries on 429 errors with exponential back-off. Under heavy simultaneous share load you may see brief delays before an item completes.
 
 ---
 
@@ -307,7 +303,6 @@ Whisper runs on CPU by default. `WHISPER_DEVICE=metal` is available for Apple Si
 - [ ] **Per-category item counts** shown on each category chip
 - [ ] **App Group** shared container (iOS) so the Share Extension can cache categories offline
 - [ ] Cookie passthrough (`--cookies-from-browser`) for auth-walled IG/TikTok content
-- [ ] Worker isolation — move heavy ingests to a dedicated process so `/api/search` is never starved
 
 ---
 
