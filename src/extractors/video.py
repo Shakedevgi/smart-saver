@@ -48,8 +48,13 @@ class VideoExtractor(BaseExtractor[VideoResult]):
     def __init__(self, frame_interval_sec: float | None = None) -> None:
         # frame_interval_sec kept for API compatibility — no longer used for
         # frame sampling since Gemini processes the full video natively.
-        self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._client: genai.Client | None = None  # lazy: avoid key validation at import time
         self._model_name = settings.gemini_model
+
+    def _get_client(self) -> genai.Client:
+        if self._client is None:
+            self._client = genai.Client(api_key=settings.gemini_api_key)
+        return self._client
 
     def extract(self, url: str) -> VideoResult:
         logger.info("Extracting video: %s", url)
@@ -244,7 +249,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
     # ---------------------------------------------------------- gemini helpers
     def _upload_and_wait(self, file_path: Path, mime_type: str):
         """Upload a file to Gemini File API and poll until it is ACTIVE."""
-        file_ref = self._client.files.upload(
+        file_ref = self._get_client().files.upload(
             path=file_path,
             config=types.UploadFileConfig(
                 mime_type=mime_type,
@@ -253,7 +258,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         )
         while file_ref.state.name == "PROCESSING":
             time.sleep(2)
-            file_ref = self._client.files.get(name=file_ref.name)
+            file_ref = self._get_client().files.get(name=file_ref.name)
         if file_ref.state.name != "ACTIVE":
             raise RuntimeError(f"Gemini file processing failed: state={file_ref.state.name}")
         return file_ref
@@ -262,7 +267,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         if file_ref is None:
             return
         try:
-            self._client.files.delete(name=file_ref.name)
+            self._get_client().files.delete(name=file_ref.name)
         except Exception:
             logger.warning("Could not delete Gemini file %s", file_ref.name)
 
@@ -273,7 +278,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         reraise=True,
     )
     def _generate_with_retry(self, contents: list) -> Any:
-        return self._client.models.generate_content(
+        return self._get_client().models.generate_content(
             model=self._model_name,
             contents=contents,
         )
