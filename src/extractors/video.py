@@ -1,18 +1,25 @@
-"""Video extractor: yt-dlp metadata + audio download → faster-whisper ASR,
-plus low-res video download → opencv frame sampling → easyocr.
+"""Video extractor: yt-dlp metadata + audio/video download → Gemini transcription + OCR.
 
-Heavy ML libraries (`faster_whisper`, `easyocr`) are imported lazily inside
-the relevant methods so an article-only run never pays the start-up cost.
+yt-dlp downloads:
+  - audio.mp3  → uploaded to Gemini File API for speech transcription
+  - video.mp4  → uploaded to Gemini File API for on-screen text extraction
+
+Both uploads are deleted from Gemini after the call completes.
 """
 
 from __future__ import annotations
 
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 import yt_dlp
+from google import genai
+from google.genai import types
+from google.genai.errors import ServerError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.config import settings
 from src.extractors.base import BaseExtractor
@@ -21,14 +28,28 @@ from src.schemas import OcrSegment, VideoResult
 
 logger = get_logger(__name__)
 
+_AUDIO_MIME: dict[str, str] = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".aac": "audio/aac",
+    ".opus": "audio/ogg",
+}
+_VIDEO_MIME: dict[str, str] = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+}
+
 
 class VideoExtractor(BaseExtractor[VideoResult]):
     def __init__(self, frame_interval_sec: float | None = None) -> None:
-        self.frame_interval_sec = (
-            frame_interval_sec
-            if frame_interval_sec is not None
-            else settings.frame_sample_interval_sec
-        )
+        # frame_interval_sec kept for API compatibility — no longer used for
+        # frame sampling since Gemini processes the full video natively.
+        self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._model_name = settings.gemini_model
 
     def extract(self, url: str) -> VideoResult:
         logger.info("Extracting video: %s", url)
@@ -67,7 +88,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
                 result.transcript = transcript
                 result.detected_language = language
             else:
-                logger.warning("No audio file found in %s — skipping ASR.", work_dir)
+                logger.warning("No audio file found in %s — skipping transcription.", work_dir)
 
             video_path = self._find_file(
                 work_dir, prefix="video",
@@ -127,7 +148,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
                     "key": "FFmpegVideoConvertor",
                     "preferedformat": "mp4",
                 },
-                # Extract a clean mp3 from the (now-guaranteed) mp4 for Whisper.
+                # Extract a clean mp3 from the (now-guaranteed) mp4 for Gemini.
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
@@ -137,8 +158,6 @@ class VideoExtractor(BaseExtractor[VideoResult]):
             ],
             # `keepvideo=True` keeps the merged mp4 alongside the extracted mp3.
             "keepvideo": True,
-            # The audio postprocessor writes to the same template basename,
-            # so the mp3 ends up at video.mp3. We rename it below.
         }
 
         try:
@@ -164,177 +183,102 @@ class VideoExtractor(BaseExtractor[VideoResult]):
         prefix: str,
         allowed_extensions: tuple[str, ...] | None = None,
     ) -> Path | None:
-        """Find `<prefix>.<ext>` in `directory`, optionally restricted to a
-        whitelist of extensions.
-
-        The whitelist matters because yt-dlp can leave intermediate stream
-        files behind (e.g. `video.f251.webm`) that share the same prefix as
-        the merged output but are unreadable by OpenCV.
-        """
         candidates = sorted(directory.glob(f"{prefix}.*"))
         if allowed_extensions:
             allowed = {ext.lower() for ext in allowed_extensions}
             candidates = [c for c in candidates if c.suffix.lower() in allowed]
         return candidates[0] if candidates else None
 
-    # ----------------------------------------------------------------- whisper
+    # --------------------------------------------------------------- transcribe
     def _transcribe(self, audio_path: Path) -> tuple[str, str | None]:
-        try:
-            from faster_whisper import WhisperModel  # heavy import, lazy
-        except ImportError:
-            logger.exception("faster-whisper is not installed")
-            return "", None
+        mime_type = _AUDIO_MIME.get(audio_path.suffix.lower(), "audio/mpeg")
+        logger.info("Uploading audio to Gemini: %s (%s)", audio_path.name, mime_type)
 
-        logger.info(
-            "Loading Whisper model=%s device=%s compute_type=%s",
-            settings.whisper_model, settings.whisper_device, settings.whisper_compute_type,
-        )
+        file_ref = None
         try:
-            model = WhisperModel(
-                settings.whisper_model,
-                device=settings.whisper_device,
-                compute_type=settings.whisper_compute_type,
+            file_ref = self._upload_and_wait(audio_path, mime_type)
+            response = self._generate_with_retry(
+                contents=[
+                    file_ref,
+                    "Transcribe all spoken audio. Return only the transcript text with no "
+                    "timestamps, speaker labels, or formatting.",
+                ],
             )
+            transcript = (response.text or "").strip()
+            logger.info("Transcription complete: %d chars", len(transcript))
+            return transcript, None
         except Exception:
-            logger.exception("Failed to load Whisper model")
+            logger.exception("Gemini transcription failed for %s", audio_path)
             return "", None
-
-        try:
-            # vad_filter=False: VAD was aggressively stripping audio with
-            # heavy music/beats and quiet speech sections, leaving an empty
-            # transcript. The extra ASR cost on silent segments is negligible.
-            segments, info = model.transcribe(
-                str(audio_path),
-                language=settings.whisper_language,
-                vad_filter=False,
-            )
-            text_parts = [seg.text.strip() for seg in segments if seg.text]
-            transcript = " ".join(text_parts).strip()
-            return transcript, getattr(info, "language", None)
-        except Exception:
-            logger.exception("Whisper transcription failed for %s", audio_path)
-            return "", None
-
-    # --------------------------------------------------------------------- ocr
-    def _ocr_frames(self, video_path: Path) -> tuple[list[OcrSegment], int]:
-        try:
-            import cv2  # type: ignore[import-not-found]
-        except ImportError:
-            logger.exception("opencv-python is not installed")
-            return [], 0
-
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            logger.error("OpenCV could not open %s", video_path)
-            return [], 0
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        frame_step = max(1, int(round(fps * self.frame_interval_sec)))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        planned = (total_frames // frame_step) if total_frames else settings.ocr_max_frames
-        cap_count = min(planned, settings.ocr_max_frames)
-        logger.info(
-            "OCR plan: fps=%.2f step=%d planned=%d cap=%d",
-            fps, frame_step, planned, cap_count,
-        )
-
-        reader = self._load_easyocr_reader()
-        if reader is None:
-            cap.release()
-            return [], 0
-
-        segments: list[OcrSegment] = []
-        frames_done = 0
-        frame_idx = 0
-        try:
-            while frames_done < cap_count:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    break
-
-                timestamp = frame_idx / fps if fps else 0.0
-                try:
-                    detections = reader.readtext(frame)
-                except Exception:
-                    logger.exception("easyocr failed on frame %d", frame_idx)
-                    detections = []
-
-                for _bbox, text, conf in detections:
-                    text_clean = (text or "").strip()
-                    if not text_clean or conf < settings.ocr_min_confidence:
-                        continue
-                    segments.append(
-                        OcrSegment(
-                            timestamp_sec=round(timestamp, 2),
-                            text=text_clean,
-                            confidence=float(conf),
-                        )
-                    )
-
-                frames_done += 1
-                frame_idx += frame_step
         finally:
-            cap.release()
+            self._delete_file(file_ref)
 
-        return segments, frames_done
+    # --------------------------------------------------------------- ocr
+    def _ocr_frames(self, video_path: Path) -> tuple[list[OcrSegment], int]:
+        mime_type = _VIDEO_MIME.get(video_path.suffix.lower(), "video/mp4")
+        logger.info("Uploading video to Gemini for OCR: %s (%s)", video_path.name, mime_type)
 
-    @staticmethod
-    def _resolve_ocr_device(setting: str) -> "bool | str":
-        """Translate `settings.ocr_device` into the value `easyocr.Reader(gpu=...)`
-        expects.
-
-        easyocr 1.7+ accepts either a bool (legacy CUDA-only) or a torch-style
-        device string ("mps" / "cuda" / "cpu"). We return `False` for CPU
-        because that's easyocr's idiomatic "disable GPU" sentinel and avoids
-        a warning at construction time.
-        """
-        choice = (setting or "auto").lower()
-
-        if choice == "cpu":
-            return False
-        if choice in ("mps", "cuda"):
-            return choice
-
-        # auto — pick the strongest backend torch can actually drive.
+        file_ref = None
         try:
-            import torch  # heavy import, lazy
-            if torch.cuda.is_available():
-                return "cuda"
-            if torch.backends.mps.is_available():
-                return "mps"
-        except Exception:
-            logger.exception("torch availability probe failed — defaulting to CPU")
-        return False
-
-    @staticmethod
-    def _load_easyocr_reader() -> Any | None:
-        try:
-            import easyocr  # heavy import, lazy
-        except ImportError:
-            logger.exception("easyocr is not installed")
-            return None
-
-        device = VideoExtractor._resolve_ocr_device(settings.ocr_device)
-        logger.info("Loading easyocr.Reader(langs=%s, device=%s)",
-                    settings.ocr_languages, device or "cpu")
-        try:
-            return easyocr.Reader(settings.ocr_languages, gpu=device)
-        except Exception:
-            logger.exception(
-                "Failed to initialise easyocr.Reader(langs=%s, device=%s)",
-                settings.ocr_languages, device,
+            file_ref = self._upload_and_wait(video_path, mime_type)
+            response = self._generate_with_retry(
+                contents=[
+                    file_ref,
+                    "List every distinct piece of on-screen text visible anywhere in this video. "
+                    "Return one text item per line, no timestamps, no labels, no commentary.",
+                ],
             )
-            # If MPS / CUDA init crashes (e.g. broken torch wheel), retry on CPU
-            # rather than letting OCR fail entirely.
-            if device is not False:
-                logger.warning("Falling back to CPU for easyocr")
-                try:
-                    return easyocr.Reader(settings.ocr_languages, gpu=False)
-                except Exception:
-                    logger.exception("CPU fallback also failed")
-            return None
+            raw_lines = [ln.strip() for ln in (response.text or "").splitlines() if ln.strip()]
+            segments = [
+                OcrSegment(timestamp_sec=0.0, text=line, confidence=1.0)
+                for line in raw_lines
+            ]
+            logger.info("OCR complete: %d lines", len(segments))
+            return segments, 1
+        except Exception:
+            logger.exception("Gemini OCR failed for %s", video_path)
+            return [], 0
+        finally:
+            self._delete_file(file_ref)
 
+    # ---------------------------------------------------------- gemini helpers
+    def _upload_and_wait(self, file_path: Path, mime_type: str):
+        """Upload a file to Gemini File API and poll until it is ACTIVE."""
+        file_ref = self._client.files.upload(
+            path=file_path,
+            config=types.UploadFileConfig(
+                mime_type=mime_type,
+                display_name=file_path.name,
+            ),
+        )
+        while file_ref.state.name == "PROCESSING":
+            time.sleep(2)
+            file_ref = self._client.files.get(name=file_ref.name)
+        if file_ref.state.name != "ACTIVE":
+            raise RuntimeError(f"Gemini file processing failed: state={file_ref.state.name}")
+        return file_ref
+
+    def _delete_file(self, file_ref: Any) -> None:
+        if file_ref is None:
+            return
+        try:
+            self._client.files.delete(name=file_ref.name)
+        except Exception:
+            logger.warning("Could not delete Gemini file %s", file_ref.name)
+
+    @retry(
+        retry=retry_if_exception_type(ServerError),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def _generate_with_retry(self, contents: list) -> Any:
+        return self._client.models.generate_content(
+            model=self._model_name,
+            contents=contents,
+        )
+
+    # ------------------------------------------------------------------- utils
     @staticmethod
     def _dedupe_ocr_lines(segments: list[OcrSegment]) -> str:
         """Keep insertion order, drop duplicate lines (case-insensitive)."""
