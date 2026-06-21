@@ -5,7 +5,7 @@ Two backends share the same public API:
   Supabase pgvector (production)
     Used when `path` is NOT given.  Reads SMART_SAVER_SUPABASE_* and
     SMART_SAVER_GEMINI_API_KEY from settings.  Embeddings via Gemini
-    text-embedding-004 (768-dim), stored in a pgvector column.
+    gemini-embedding-001 (768-dim), stored in a pgvector column.
 
   ChromaDB (test / legacy)
     Used when `path` IS given (smoke tests pass a tempdir).  Keeps all
@@ -50,11 +50,9 @@ class VectorStoreManager:
 
     # ================================================================ init
     def _init_supabase(self) -> None:
-        from google import genai
         from supabase import create_client
 
         self._sb = create_client(settings.supabase_url, settings.supabase_key)
-        self._gemini = genai.Client(api_key=settings.gemini_api_key)
         logger.info("VectorStoreManager: Supabase backend at %s", settings.supabase_url)
 
     def _init_chroma(
@@ -166,12 +164,15 @@ class VectorStoreManager:
 
     # =========================================================== supabase impl
     def _embed(self, text: str) -> list[float]:
-        from google.genai import types
-        result = self._gemini.models.embed_content(
-            model="text-embedding-004",
-            contents=text,
+        import httpx
+        resp = httpx.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+            headers={"x-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
+            json={"model": "models/gemini-embedding-001", "content": {"parts": [{"text": text}]}},
+            timeout=30,
         )
-        return list(result.embeddings[0].values)
+        resp.raise_for_status()
+        return resp.json()["embedding"]["values"]
 
     def _sb_add_item(self, url: str, result: IngestionResult) -> bool:
         text = result.aggregated_text
