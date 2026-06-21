@@ -15,7 +15,8 @@ rich>=13.7
 google-genai>=1.0
 
 # Step 3 — vector storage / semantic search
-chromadb>=1.0
+chromadb>=1.0      # kept for test backend (tempdir-based VectorStoreManager)
+supabase>=2.0      # production backend
 
 # Step 4 — HTTP API
 fastapi>=0.110
