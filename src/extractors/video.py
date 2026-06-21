@@ -250,7 +250,7 @@ class VideoExtractor(BaseExtractor[VideoResult]):
     def _upload_and_wait(self, file_path: Path, mime_type: str):
         """Upload a file to Gemini File API and poll until it is ACTIVE."""
         file_ref = self._get_client().files.upload(
-            path=file_path,
+            file=file_path,
             config=types.UploadFileConfig(
                 mime_type=mime_type,
                 display_name=file_path.name,

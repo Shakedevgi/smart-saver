@@ -38,6 +38,26 @@ from src.schemas import AnalysisResult, ExtractedEntities, IngestionResult
 logger = get_logger(__name__)
 
 
+def _gemini_schema(model_cls) -> dict:
+    """Convert a Pydantic model to a JSON schema dict Gemini accepts.
+
+    Gemini's structured-output API rejects `additionalProperties` (produced
+    by Pydantic `extra="allow"` models).  Strip it recursively.
+    """
+    def _strip(node):
+        if isinstance(node, dict):
+            node.pop("additionalProperties", None)
+            for v in node.values():
+                _strip(v)
+        elif isinstance(node, list):
+            for item in node:
+                _strip(item)
+
+    schema = model_cls.model_json_schema()
+    _strip(schema)
+    return schema
+
+
 SYSTEM_PROMPT = """\
 You are the analysis brain of "Smart Saver", a personal second-brain
 that ingests articles, videos, and social-media posts a user saves.
@@ -215,7 +235,7 @@ class LLMAnalyzer:
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type="application/json",
-                response_schema=AnalysisResult,
+                response_schema=_gemini_schema(AnalysisResult),
                 temperature=self.temperature,
             ),
         )
