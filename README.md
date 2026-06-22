@@ -116,6 +116,26 @@ uvicorn src.api.main:app --reload  # runs on 127.0.0.1:8000
 
 ---
 
+## ⚠️ Required: Add your backend URL to the mobile clients
+
+After deploying to Cloud Run, get your service URL:
+
+```bash
+gcloud run services describe smart-saver --region <your-region> --format="value(status.url)"
+```
+
+Then replace `YOUR_CLOUD_RUN_URL_HERE` in these three files with your actual URL:
+
+| File | Constant |
+|------|----------|
+| `ios/SmartSaver/Services/NetworkManager.swift` | `kDefaultAPIBaseURL` |
+| `ios/ShareExtension/ShareViewController.swift` | `kIngestEndpoint` |
+| `android/app/src/main/kotlin/com/shakedivgi/smartsaver/data/AppConfig.kt` | `API_BASE_URL` |
+
+> **Do not commit your real URL.** The backend has no authentication — anyone with the URL can hit your endpoint and consume your Gemini API credits.
+
+---
+
 ## 🍎 iOS Setup
 
 ### Build & deploy
@@ -125,7 +145,7 @@ brew install xcodegen ffmpeg
 open ios/SmartSaver.xcodeproj
 ```
 
-- Point `kDefaultAPIBaseURL` in `NetworkManager.swift` to your Cloud Run service URL
+- Fill in `kDefaultAPIBaseURL` in `NetworkManager.swift` with your Cloud Run URL (see setup step above)
 - Select your iPhone or Simulator in the Xcode scheme picker
 - **⌘R** — Xcode automatically picks your registered personal team; no manual signing configuration needed
 - First install: iPhone → Settings → General → **VPN & Device Management** → trust your Apple ID
@@ -145,7 +165,7 @@ Settings → Privacy & Security → **Developer Mode** → ON → restart → co
 
 ### Build from Android Studio
 
-- Update the backend URL in `AppConfig.kt` to your Cloud Run service URL
+- Fill in `API_BASE_URL` in `AppConfig.kt` with your Cloud Run URL (see setup step above)
 - Open the Android project in Android Studio — Gradle syncs automatically on first open
 - Select your device in the device picker → **▶ Run**
 

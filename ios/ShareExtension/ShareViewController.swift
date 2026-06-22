@@ -13,7 +13,10 @@
 import UIKit
 import UniformTypeIdentifiers
 
-private let kIngestEndpoint = URL(string: "https://smart-saver-324626661375.europe-west1.run.app/api/ingest")!
+// TODO: Replace the placeholder below with your Cloud Run service URL after deployment.
+// Get your URL from: gcloud run services describe smart-saver --region <your-region> --format="value(status.url)"
+// Example: "https://<your-service>.<region>.run.app/api/ingest"
+private let kIngestEndpoint = URL(string: "https://YOUR_CLOUD_RUN_URL_HERE/api/ingest")!
 private let kRequestTimeout: TimeInterval = 180  // video pipeline may need ASR + OCR
 
 final class ShareViewController: UIViewController {
